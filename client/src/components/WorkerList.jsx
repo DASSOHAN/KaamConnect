@@ -1,11 +1,8 @@
 import React, { useState, useMemo } from 'react';
-import { 
-  Search, 
-  ArrowUpDown,
-  FilterX
-} from 'lucide-react';
+import { ArrowUpDown, FilterX } from 'lucide-react';
 import { WorkerCard } from './WorkerCard';
 import { TRANSLATIONS } from '../utils/i18n';
+import { getCategoryCatalog, getWorkerCategoryId } from '../utils/workerCategories';
 
 export const WorkerList = ({
   workers = [],
@@ -15,46 +12,66 @@ export const WorkerList = ({
   language,
   onContactWorker,
   selectedRadius,
+  searchQuery = '',
+  onClearSearch,
+  isLoading = false,
+  loadError = '',
+  onRetry,
+  heading,
+  categories,
 }) => {
-  const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('nearest');
   const t = TRANSLATIONS[language] || TRANSLATIONS.en;
 
-  const categoriesList = [
+  const categoriesList = categories || [
     { id: 'all', label: t.allCategories },
-    { id: 'electrician', label: 'Electricians' },
-    { id: 'plumber', label: 'Plumbers' },
-    { id: 'carpenter', label: 'Carpenters' },
-    { id: 'painter', label: 'Painters' },
-    { id: 'cleaner', label: 'Cleaners' },
-    { id: 'mason', label: 'Masons & Labor' },
-  ];
+    ...getCategoryCatalog([], workers),
+  ].filter((category, index, list) => list.findIndex((item) => item.id === category.id) === index);
 
   // Filter and sort workers
   const filteredWorkers = useMemo(() => {
-    return workers
+    const query = searchQuery.trim().toLocaleLowerCase();
+    const uniqueWorkers = new Map();
+
+    workers
       .filter((w) => {
-        if (selectedCategory !== 'all' && w.tradeId !== selectedCategory) {
+        if (selectedCategory !== 'all' && getWorkerCategoryId(w) !== selectedCategory) {
           return false;
         }
-        if (w.distanceKm > selectedRadius) {
+        if (Number(w.distanceKm) > Number(selectedRadius)) {
           return false;
         }
-        if (searchQuery.trim() !== '') {
-          const q = searchQuery.toLowerCase();
-          const matchName = w.name?.toLowerCase().includes(q) || w.nameBn?.includes(q) || w.nameHi?.includes(q);
-          const matchSkills = w.skills?.some((s) => s.toLowerCase().includes(q));
-          const matchTrade = w.tradeTitle?.toLowerCase().includes(q);
-          return matchName || matchSkills || matchTrade;
+        if (query !== '') {
+          const searchableFields = [
+            w.name,
+            w.nameBn,
+            w.nameHi,
+            w.tradeTitle,
+            w.tradeId,
+            categoriesList.find((category) => category.id === w.tradeId)?.label,
+            w.locality,
+            w.bio,
+            ...(Array.isArray(w.skills) ? w.skills : []),
+          ];
+
+          return searchableFields.some((field) =>
+            String(field ?? '').toLocaleLowerCase().includes(query)
+          );
         }
         return true;
       })
-      .sort((a, b) => {
-        if (sortBy === 'nearest') return a.distanceKm - b.distanceKm;
-        if (sortBy === 'rating') return b.rating - a.rating;
-        if (sortBy === 'price') return a.halfDayRate - b.halfDayRate;
-        return 0;
+      .forEach((worker) => {
+        if (worker?.id && !uniqueWorkers.has(worker.id)) {
+          uniqueWorkers.set(worker.id, worker);
+        }
       });
+
+    return Array.from(uniqueWorkers.values()).sort((a, b) => {
+      if (sortBy === 'nearest') return Number(a.distanceKm) - Number(b.distanceKm);
+      if (sortBy === 'rating') return Number(b.rating) - Number(a.rating);
+      if (sortBy === 'price') return Number(a.halfDayRate) - Number(b.halfDayRate);
+      return 0;
+    });
   }, [workers, selectedCategory, selectedRadius, searchQuery, sortBy]);
 
   return (
@@ -63,32 +80,13 @@ export const WorkerList = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h2 className="text-2xl font-bold text-slate-900 tracking-tight">
-            Verified Nadia Technicians in Your Radius ({selectedRadius} km)
+            {heading || `Verified Nadia Technicians in Your Radius (${selectedRadius} km)`}
           </h2>
           <p className="text-xs sm:text-sm text-slate-600 mt-1">
-            Real background-checked informal workers with zero middleman exploitation.
+            Fictional demo profiles for exploring KaamConnect worker discovery.
           </p>
         </div>
 
-        {/* Search Bar */}
-        <div className="relative w-full sm:w-72">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Search by worker name, skill, or task..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition placeholder:text-slate-400"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
-            >
-              Clear
-            </button>
-          )}
-        </div>
       </div>
 
       {/* Filter and Sorting Pills Row */}
@@ -145,8 +143,28 @@ export const WorkerList = ({
         </div>
       </div>
 
-      {/* Grid of Worker Cards */}
-      {filteredWorkers.length > 0 ? (
+      {isLoading ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 sm:p-12 text-center" role="status" aria-live="polite">
+          <div className="w-10 h-10 rounded-full border-4 border-slate-200 border-t-blue-600 animate-spin mx-auto mb-4" aria-hidden="true" />
+          <h3 className="text-base font-bold text-slate-800">Loading worker profiles…</h3>
+          <p className="text-xs text-slate-500 mt-1">Fetching fictional demo workers near Kalyani.</p>
+        </div>
+      ) : loadError ? (
+        <div className="bg-white rounded-2xl border border-rose-200 p-8 sm:p-12 text-center" role="alert">
+          <h3 className="text-base font-bold text-slate-800">Worker profiles are unavailable</h3>
+          <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">{loadError}</p>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="mt-4 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold transition"
+          >
+            Try again
+          </button>
+        </div>
+      ) : (
+
+      /* Grid of Worker Cards */
+      filteredWorkers.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredWorkers.map((worker) => (
             <WorkerCard
@@ -163,14 +181,14 @@ export const WorkerList = ({
           <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
             <FilterX className="w-6 h-6" />
           </div>
-          <h3 className="text-base font-bold text-slate-800">No technicians found in this radius</h3>
+          <h3 className="text-base font-bold text-slate-800">No workers found.</h3>
           <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-            Try expanding your discovery radius to 3 km or 5 km, or reset your search filters.
+            Try another service, skill, worker name, or locality. You can also expand your radius or reset the filters.
           </p>
           <div className="mt-4 flex items-center justify-center gap-2">
             <button
               onClick={() => {
-                setSearchQuery('');
+                onClearSearch?.();
                 onCategoryChange('all');
               }}
               className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition"
@@ -179,6 +197,7 @@ export const WorkerList = ({
             </button>
           </div>
         </div>
+      )
       )}
     </section>
   );

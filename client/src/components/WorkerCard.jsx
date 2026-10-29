@@ -55,7 +55,14 @@ export const WorkerCard = ({
               <h3 className="text-base font-bold text-slate-900 truncate">
                 {getLocalizedWorkerName(worker)}
               </h3>
-              {worker.kycVerified && (
+              {worker.isDemo ? (
+                <span
+                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold border border-amber-200"
+                  title="Fictional demonstration profile"
+                >
+                  Demo Profile
+                </span>
+              ) : worker.kycVerified && (
                 <span 
                   className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-bold border border-blue-200"
                   title="Aadhaar KYC & Local Police Verification Cleared"

@@ -73,11 +73,14 @@ app.get('/api/workers', (req, res) => {
   if (q && q.trim()) {
     const query = q.trim().toLowerCase();
     results = results.filter((w) =>
-      w.name.toLowerCase().includes(query) ||
-      w.nameBn.includes(query) ||
-      w.nameHi.includes(query) ||
-      w.skills.some((s) => s.toLowerCase().includes(query)) ||
-      w.locality.toLowerCase().includes(query)
+      String(w.name || '').toLowerCase().includes(query) ||
+      String(w.nameBn || '').toLowerCase().includes(query) ||
+      String(w.nameHi || '').toLowerCase().includes(query) ||
+      String(w.tradeId || '').toLowerCase().includes(query) ||
+      String(w.tradeTitle || '').toLowerCase().includes(query) ||
+      String(w.bio || '').toLowerCase().includes(query) ||
+      String(w.locality || '').toLowerCase().includes(query) ||
+      (Array.isArray(w.skills) && w.skills.some((s) => String(s || '').toLowerCase().includes(query)))
     );
   }
 

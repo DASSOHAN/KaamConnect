@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Header } from './components/Header';
 import { ServiceGrid } from './components/ServiceGrid';
 import { WorkerList } from './components/WorkerList';
+import { CategoryResultsPage } from './components/CategoryResultsPage';
 import { BookingModal } from './components/BookingModal';
 import { LiveTracking } from './components/LiveTracking';
 import { WorkerDashboard } from './components/WorkerDashboard';
@@ -10,11 +11,14 @@ import { FairWageExplainer } from './components/FairWageExplainer';
 import { ToastContainer } from './components/Toast';
 import { api } from './services/api';
 import { TRANSLATIONS } from './utils/i18n';
+import { getCategoryCatalog } from './utils/workerCategories';
 import { 
   MapPin, 
   ShieldCheck, 
   ArrowRight,
-  Sparkles
+  Sparkles,
+  Search,
+  X
 } from 'lucide-react';
 
 export function App() {
@@ -23,7 +27,12 @@ export function App() {
   const [language, setLanguage] = useState('en');
   const [selectedRadius, setSelectedRadius] = useState(3);
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [isMobileEmulation, setIsMobileEmulation] = useState(false);
+  const [pathname, setPathname] = useState(() => window.location.pathname);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(0);
+  const searchContainerRef = useRef(null);
 
   // Dynamic Backend Data State
   const [locations, setLocations] = useState([
@@ -35,6 +44,9 @@ export function App() {
   const [selectedLocation, setSelectedLocation] = useState(locations[0]);
   const [services, setServices] = useState([]);
   const [workers, setWorkers] = useState([]);
+  const [isWorkersLoading, setIsWorkersLoading] = useState(true);
+  const [workerLoadError, setWorkerLoadError] = useState('');
+  const [workerLoadAttempt, setWorkerLoadAttempt] = useState(0);
   const [analytics, setAnalytics] = useState(null);
   const [incomingJob, setIncomingJob] = useState(null);
 
@@ -50,6 +62,66 @@ export function App() {
   // Toast System
   const [toasts, setToasts] = useState([]);
 
+  const categoryCatalog = useMemo(() => getCategoryCatalog(services, workers), [services, workers]);
+  const categorySlug = pathname.match(/^\/workers\/([^/]+)\/?$/)?.[1]?.toLowerCase();
+  const activeCategory = categoryCatalog.find((category) =>
+    category.id === categorySlug || category.slug === categorySlug
+  );
+  const categorySuggestions = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return [];
+    return categoryCatalog.filter((category) =>
+      category.label.toLowerCase().includes(query) || category.id.includes(query)
+    );
+  }, [categoryCatalog, searchQuery]);
+
+  useEffect(() => {
+    const handlePopState = () => setPathname(window.location.pathname);
+    const handleOutsideClick = (event) => {
+      if (!searchContainerRef.current?.contains(event.target)) setIsSearchOpen(false);
+    };
+    window.addEventListener('popstate', handlePopState);
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, []);
+
+  const navigateTo = (path) => {
+    window.history.pushState({}, '', path);
+    setPathname(path);
+  };
+
+  const selectCategorySuggestion = (category) => {
+    setSearchQuery('');
+    setIsSearchOpen(false);
+    setActiveSuggestion(0);
+    setSelectedCategory(category.id);
+    navigateTo(`/workers/${category.slug}`);
+  };
+
+  const handleSearchKeyDown = (event) => {
+    if (event.key === 'ArrowDown' && categorySuggestions.length > 0) {
+      event.preventDefault();
+      setActiveSuggestion((index) => (index + 1) % categorySuggestions.length);
+    } else if (event.key === 'ArrowUp' && categorySuggestions.length > 0) {
+      event.preventDefault();
+      setActiveSuggestion((index) => (index - 1 + categorySuggestions.length) % categorySuggestions.length);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const exactCategory = categorySuggestions.find((category) =>
+        category.label.toLowerCase() === searchQuery.trim().toLowerCase() ||
+        category.id === searchQuery.trim().toLowerCase()
+      );
+      const categoryToSelect = exactCategory || (categorySuggestions.length === 1 ? categorySuggestions[0] : null);
+      if (categoryToSelect) selectCategorySuggestion(categoryToSelect);
+      else setIsSearchOpen(false);
+    } else if (event.key === 'Escape') {
+      setIsSearchOpen(false);
+    }
+  };
+
   const showToast = (title, message, type = 'info') => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
     setToasts((prev) => [...prev, { id, title, message, type }]);
@@ -62,13 +134,12 @@ export function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Fetch initial data from Express backend on mount
+  // Fetch supporting data from Express backend on mount.
   useEffect(() => {
     async function loadBackendData() {
-      const [locs, srvs, wrks, anl, job] = await Promise.all([
+      const [locs, srvs, anl, job] = await Promise.all([
         api.getLocations(),
         api.getServices(),
-        api.getWorkers(),
         api.getAnalytics(),
         api.getIncomingJob()
       ]);
@@ -78,13 +149,38 @@ export function App() {
         setSelectedLocation(locs[0]);
       }
       if (srvs && srvs.length > 0) setServices(srvs);
-      if (wrks && wrks.length > 0) setWorkers(wrks);
       if (anl) setAnalytics(anl);
       if (job) setIncomingJob(job);
     }
 
     loadBackendData();
   }, []);
+
+  // Keep worker loading separate so a failure here is visible and retryable.
+  useEffect(() => {
+    let isCurrentRequest = true;
+    setIsWorkersLoading(true);
+    setWorkerLoadError('');
+
+    api.getWorkers()
+      .then((loadedWorkers) => {
+        if (!isCurrentRequest) return;
+        setWorkers(loadedWorkers);
+      })
+      .catch((error) => {
+        if (!isCurrentRequest) return;
+        console.error('Unable to load worker profiles:', error);
+        setWorkers([]);
+        setWorkerLoadError('Worker profiles could not be loaded. Please start the backend and try again.');
+      })
+      .finally(() => {
+        if (isCurrentRequest) setIsWorkersLoading(false);
+      });
+
+    return () => {
+      isCurrentRequest = false;
+    };
+  }, [workerLoadAttempt]);
 
   // Handlers for booking triggers
   const handleOpenBookingForCategory = (category) => {
@@ -214,8 +310,84 @@ export function App() {
         {/* Main Content Area by Perspective Role */}
         <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 w-full">
           {/* CUSTOMER PERSPECTIVE */}
-          {currentRole === 'customer' && (
+          {currentRole === 'customer' && activeCategory ? (
+            <CategoryResultsPage
+              category={activeCategory}
+              workers={workers}
+              selectedRadius={selectedRadius}
+              onBookWorker={handleOpenBookingForWorker}
+              language={language}
+              onContactWorker={(type, w) => handleContactWorker(type, w)}
+              isLoading={isWorkersLoading}
+              loadError={workerLoadError}
+              onRetry={() => setWorkerLoadAttempt((attempt) => attempt + 1)}
+              onBack={() => {
+                setSelectedCategory('all');
+                navigateTo('/');
+              }}
+            />
+          ) : currentRole === 'customer' && (
             <div className="space-y-6">
+              {/* Primary worker search */}
+              <section className="mt-4 rounded-2xl border border-blue-100 bg-white p-4 shadow-subtle sm:p-5">
+                <label htmlFor="worker-search" className="mb-2 block text-sm font-bold text-slate-900">
+                  Find the right worker for your job
+                </label>
+                <div className="relative z-50" ref={searchContainerRef}>
+                  <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-blue-600" aria-hidden="true" />
+                  <input
+                    id="worker-search"
+                    type="search"
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setActiveSuggestion(0);
+                      setIsSearchOpen(Boolean(e.target.value.trim()));
+                    }}
+                    onFocus={() => searchQuery.trim() && setIsSearchOpen(true)}
+                    onKeyDown={handleSearchKeyDown}
+                    placeholder="Search electricians, plumbers, workers or skills..."
+                    autoComplete="off"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-12 pr-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-500/15 sm:py-3.5 sm:text-base"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      aria-label="Clear worker search"
+                      className="absolute right-3 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <X className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  )}
+                  {isSearchOpen && categorySuggestions.length > 0 && (
+                    <div
+                      className="absolute left-0 right-0 top-full mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card"
+                      role="listbox"
+                      aria-label="Category suggestions"
+                    >
+                      {categorySuggestions.map((category, index) => (
+                        <button
+                          type="button"
+                          key={category.id}
+                          role="option"
+                          aria-selected={index === activeSuggestion}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => selectCategorySuggestion(category)}
+                          className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm transition ${
+                            index === activeSuggestion ? 'bg-blue-50 text-blue-900' : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className="font-semibold">{category.label}</span>
+                          <span className="text-xs text-slate-400">View workers</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-slate-500">Search by name, service, skill, or locality.</p>
+              </section>
+
               {/* Quick Hero Notification Banner */}
               <div className="mt-4 p-4 rounded-2xl bg-white border border-slate-200 shadow-subtle flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
@@ -280,6 +452,11 @@ export function App() {
                 language={language}
                 onContactWorker={(type, w) => handleContactWorker(type, w)}
                 selectedRadius={selectedRadius}
+                searchQuery={searchQuery}
+                onClearSearch={() => setSearchQuery('')}
+                isLoading={isWorkersLoading}
+                loadError={workerLoadError}
+                onRetry={() => setWorkerLoadAttempt((attempt) => attempt + 1)}
               />
             </div>
           )}

@@ -38,18 +38,21 @@ export const api = {
 
   // Workers
   getWorkers: async (trade = 'all', maxDistance = null, query = '') => {
-    try {
-      const params = new URLSearchParams();
-      if (trade && trade !== 'all') params.append('trade', trade);
-      if (maxDistance) params.append('maxDistance', maxDistance);
-      if (query) params.append('q', query);
+    const params = new URLSearchParams();
+    if (trade && trade !== 'all') params.append('trade', trade);
+    if (maxDistance) params.append('maxDistance', maxDistance);
+    if (query) params.append('q', query);
 
-      const res = await fetch(`${BASE_URL}/workers?${params.toString()}`);
-      const json = await res.json();
-      return json.data;
-    } catch (e) {
-      return null;
+    const res = await fetch(`${BASE_URL}/workers?${params.toString()}`);
+    if (!res.ok) {
+      throw new Error(`Worker API returned HTTP ${res.status}`);
     }
+
+    const json = await res.json();
+    if (!Array.isArray(json.data)) {
+      throw new Error('Worker API returned an invalid response');
+    }
+    return json.data;
   },
 
   // Toggle KYC
