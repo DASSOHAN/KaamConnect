@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 min-h-screen m-0 p-0;
+  }
+
+  #root {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #f1f5f9;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
+
+/* Radar Pulse animations */
+@keyframes radarPing {
+  0% { transform: scale(0.6); opacity: 0.85; }
+  70% { transform: scale(2.4); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+.animate-radar-ring-1 { animation: radarPing 3s cubic-bezier(0, 0.2, 0.8, 1) infinite; }
+.animate-radar-ring-2 { animation: radarPing 3s cubic-bezier(0, 0.2, 0.8, 1) 1s infinite; }
+.animate-radar-ring-3 { animation: radarPing 3s cubic-bezier(0, 0.2, 0.8, 1) 2s infinite; }
+
+/* Audio wave bars */
+@keyframes waveBar {
+  0%, 100% { height: 4px; }
+  50% { height: 20px; }
+}
+.wave-bar-1 { animation: waveBar 0.8s ease-in-out infinite 0.1s; }
+.wave-bar-2 { animation: waveBar 0.8s ease-in-out infinite 0.25s; }
+.wave-bar-3 { animation: waveBar 0.8s ease-in-out infinite 0.4s; }
+.wave-bar-4 { animation: waveBar 0.8s ease-in-out infinite 0.15s; }
+.wave-bar-5 { animation: waveBar 0.8s ease-in-out infinite 0.3s; }

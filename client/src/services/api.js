@@ -1,0 +1,161 @@
+// API Service connecting pure React frontend with Express backend
+
+const BASE_URL = '/api';
+
+export const api = {
+  // Health
+  checkHealth: async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/health`);
+      return await res.json();
+    } catch (e) {
+      console.warn('Backend not responding yet, fallback active:', e);
+      return { status: 'fallback' };
+    }
+  },
+
+  // Locations
+  getLocations: async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/locations`);
+      const json = await res.json();
+      return json.data;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  // Services
+  getServices: async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/services`);
+      const json = await res.json();
+      return json.data;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  // Workers
+  getWorkers: async (trade = 'all', maxDistance = null, query = '') => {
+    try {
+      const params = new URLSearchParams();
+      if (trade && trade !== 'all') params.append('trade', trade);
+      if (maxDistance) params.append('maxDistance', maxDistance);
+      if (query) params.append('q', query);
+
+      const res = await fetch(`${BASE_URL}/workers?${params.toString()}`);
+      const json = await res.json();
+      return json.data;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  // Toggle KYC
+  toggleWorkerKyc: async (workerId, kycVerified) => {
+    try {
+      const res = await fetch(`${BASE_URL}/workers/${workerId}/kyc`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kycVerified }),
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false };
+    }
+  },
+
+  // Toggle Duty
+  toggleWorkerDuty: async (workerId, isAvailable) => {
+    try {
+      const res = await fetch(`${BASE_URL}/workers/${workerId}/duty`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isAvailable }),
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false };
+    }
+  },
+
+  // Create Booking
+  createBooking: async (bookingData) => {
+    try {
+      const res = await fetch(`${BASE_URL}/bookings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bookingData),
+      });
+      const json = await res.json();
+      return json.data;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  // Update Booking Status
+  updateBookingStatus: async (bookingId, status) => {
+    try {
+      const res = await fetch(`${BASE_URL}/bookings/${bookingId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      const json = await res.json();
+      return json.data;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  // Review Booking
+  reviewBooking: async (bookingId, rating, tipAmount, reviewComment) => {
+    try {
+      const res = await fetch(`${BASE_URL}/bookings/${bookingId}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating, tipAmount, reviewComment }),
+      });
+      const json = await res.json();
+      return json.data;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  // Analytics
+  getAnalytics: async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/analytics`);
+      const json = await res.json();
+      return json.data;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  // Worker Incoming Job
+  getIncomingJob: async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/jobs/incoming`);
+      const json = await res.json();
+      return json.data;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  // Worker Accept Job
+  acceptJob: async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/jobs/incoming/accept`, {
+        method: 'POST',
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false };
+    }
+  },
+};
