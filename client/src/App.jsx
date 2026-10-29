@@ -100,6 +100,15 @@ export function App() {
     setPathname(path);
   };
 
+  const handleRoleChange = (role) => {
+    setCurrentRole(role);
+    if (role === 'customer') {
+      // Customer View always opens the discovery homepage. This prevents
+      // booking/dashboard routes from masking the original worker search UI.
+      navigateTo('/');
+    }
+  };
+
   const selectCategorySuggestion = (category) => {
     setSearchQuery('');
     setIsSearchOpen(false);
@@ -310,7 +319,7 @@ export function App() {
         {/* Persistent Navigation Header */}
         <Header
           currentRole={currentRole}
-          setRole={setCurrentRole}
+          setRole={handleRoleChange}
           language={language}
           setLanguage={setLanguage}
           selectedLocation={selectedLocation}
