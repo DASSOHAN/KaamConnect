@@ -26,6 +26,8 @@ export const Header = ({
   setIsMobileEmulation,
   hasActiveBooking,
   onOpenActiveBooking,
+  onOpenMyJobs,
+  onBecomeWorker,
   locations = [],
 }) => {
   const [isLocationOpen, setIsLocationOpen] = useState(false);
@@ -207,6 +209,17 @@ export const Header = ({
               <Activity className="w-3.5 h-3.5" />
               <span>Live Job Active</span>
             </button>
+          )}
+
+          {currentRole === 'customer' && (
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={onOpenMyJobs} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                My Bookings
+              </button>
+              <button type="button" onClick={onBecomeWorker} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-slate-950 hover:bg-amber-400">
+                Become a Worker
+              </button>
+            </div>
           )}
 
           {/* Perspective Switcher: Customer / Worker / Admin */}

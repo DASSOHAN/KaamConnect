@@ -27,3 +27,6 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Local demo persistence created by the Express server
+server/runtime-data.json

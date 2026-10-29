@@ -6,6 +6,9 @@ import { CategoryResultsPage } from './components/CategoryResultsPage';
 import { BookingModal } from './components/BookingModal';
 import { LiveTracking } from './components/LiveTracking';
 import { WorkerDashboard } from './components/WorkerDashboard';
+import { WorkerWorkspace } from './components/WorkerWorkspace';
+import { CustomerJobs } from './components/CustomerJobs';
+import { WorkerRegistration } from './components/WorkerRegistration';
 import { AdminView } from './components/AdminView';
 import { FairWageExplainer } from './components/FairWageExplainer';
 import { ToastContainer } from './components/Toast';
@@ -29,6 +32,9 @@ export function App() {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isMobileEmulation, setIsMobileEmulation] = useState(false);
+  const [customerId] = useState('demo-customer-1');
+  const [workerOwnerId, setWorkerOwnerId] = useState(() => window.sessionStorage.getItem('kaamconnect-worker-owner') || 'demo-worker-owner');
+  const [currentWorkerId, setCurrentWorkerId] = useState(() => window.sessionStorage.getItem('kaamconnect-worker-id') || '');
   const [pathname, setPathname] = useState(() => window.location.pathname);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
@@ -67,6 +73,7 @@ export function App() {
   const activeCategory = categoryCatalog.find((category) =>
     category.id === categorySlug || category.slug === categorySlug
   );
+  const activeWorkerId = currentWorkerId || workers[0]?.id;
   const categorySuggestions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
@@ -99,6 +106,16 @@ export function App() {
     setActiveSuggestion(0);
     setSelectedCategory(category.id);
     navigateTo(`/workers/${category.slug}`);
+  };
+
+  const handleWorkerRegistered = (profile) => {
+    setWorkers((current) => [...current, profile]);
+    setCurrentWorkerId(profile.id);
+    setWorkerOwnerId(profile.ownerId);
+    window.sessionStorage.setItem('kaamconnect-worker-id', profile.id);
+    window.sessionStorage.setItem('kaamconnect-worker-owner', profile.ownerId);
+    setCurrentRole('worker');
+    navigateTo('/worker-dashboard');
   };
 
   const handleSearchKeyDown = (event) => {
@@ -197,7 +214,7 @@ export function App() {
   };
 
   const handleBookingConfirmed = async (newBookingData) => {
-    const createdBooking = await api.createBooking(newBookingData);
+    const createdBooking = await api.createBooking({ ...newBookingData, customerId });
     const finalBooking = createdBooking || {
       id: `BK-KLY-${Math.floor(1000 + Math.random() * 9000)}`,
       ...newBookingData,
@@ -304,13 +321,27 @@ export function App() {
           setIsMobileEmulation={setIsMobileEmulation}
           hasActiveBooking={!!activeBooking}
           onOpenActiveBooking={() => setIsLiveTrackingOpen(true)}
+          onOpenMyJobs={() => { setCurrentRole('customer'); navigateTo('/bookings'); }}
+          onBecomeWorker={() => navigateTo('/register-worker')}
           locations={locations}
         />
 
         {/* Main Content Area by Perspective Role */}
         <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 w-full">
           {/* CUSTOMER PERSPECTIVE */}
-          {currentRole === 'customer' && activeCategory ? (
+          {pathname === '/register-worker' ? (
+            <WorkerRegistration
+              ownerId={workerOwnerId}
+              onBack={() => navigateTo('/')}
+              onSuccess={handleWorkerRegistered}
+            />
+          ) : currentRole === 'customer' && (pathname === '/bookings' || pathname === '/jobs') ? (
+            <CustomerJobs
+              customerId={customerId}
+              onBack={() => navigateTo('/')}
+              onOpenLiveBooking={(job) => { setActiveBooking(job); setIsLiveTrackingOpen(true); }}
+            />
+          ) : currentRole === 'customer' && activeCategory ? (
             <CategoryResultsPage
               category={activeCategory}
               workers={workers}
@@ -463,11 +494,14 @@ export function App() {
 
           {/* WORKER COCKPIT PERSPECTIVE */}
           {currentRole === 'worker' && (
-            <WorkerDashboard
+            <WorkerWorkspace
               language={language}
               showToast={showToast}
               workers={workers}
               incomingJobData={incomingJob}
+              workerId={activeWorkerId}
+              ownerId={workerOwnerId}
+              onBack={() => { setCurrentRole('customer'); navigateTo('/'); }}
               onJobAcceptedByWorker={(job) => {
                 const matchingWorker = workers[0];
                 setActiveBooking({
