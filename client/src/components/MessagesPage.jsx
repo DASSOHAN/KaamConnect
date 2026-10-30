@@ -3,7 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ImagePlus, LoaderCircle, MessageSquare, Send, ShieldCheck, Flag } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import { browserSupabase } from '../lib/supabase';
 
 const privacyMessage = 'To protect your privacy and keep your booking secure, please communicate through KaamConnect.';
 
@@ -22,31 +21,27 @@ export function MessagesPage() {
   const activeConversation = conversations.find((item) => item.id === conversationId);
 
   const loadConversations = useCallback(async () => {
-    if (!session?.access_token) return;
-    try { setConversations(await api.getConversations(session.access_token)); } catch (err) { setError(err.message); }
-  }, [session?.access_token]);
+    if (!session?.user) return;
+    try { setConversations(await api.getConversations(session.user)); } catch (err) { setError(err.message); }
+  }, [session?.user]);
   const loadMessages = useCallback(async () => {
-    if (!session?.access_token || !conversationId) { setMessages([]); return; }
-    try { setMessages(await api.getConversationMessages(session.access_token, conversationId)); setError(''); }
+    if (!session?.user || !conversationId) { setMessages([]); return; }
+    try { setMessages(await api.getConversationMessages(session.user, conversationId)); setError(''); }
     catch (err) { setError(err.message); }
-  }, [session?.access_token, conversationId]);
+  }, [session?.user, conversationId]);
   useEffect(() => { loadConversations(); }, [loadConversations]);
   useEffect(() => { loadMessages(); }, [loadMessages]);
   useEffect(() => {
     if (!conversationId) return undefined;
     const timer = window.setInterval(() => { loadMessages(); loadConversations(); }, 12000);
-    let channel;
-    if (browserSupabase) {
-      channel = browserSupabase.channel(`chat-${conversationId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` }, () => { loadMessages(); loadConversations(); }).subscribe();
-    }
-    return () => { window.clearInterval(timer); if (channel) browserSupabase.removeChannel(channel); };
+    return () => window.clearInterval(timer);
   }, [conversationId, loadMessages, loadConversations]);
   useEffect(() => { tail.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   const send = async (event) => {
     event.preventDefault(); if (!text.trim() || !conversationId || busy) return;
     setBusy(true); setError('');
-    try { await api.sendMessage(session.access_token, conversationId, { type: 'text', text }); setText(''); await Promise.all([loadMessages(), loadConversations()]); }
+    try { await api.sendMessage(session.user, conversationId, { type: 'text', text }); setText(''); await Promise.all([loadMessages(), loadConversations()]); }
     catch (err) { setError(err.code === 'CONTACT_DETAILS_BLOCKED' ? privacyMessage : err.message); }
     finally { setBusy(false); }
   };
@@ -54,36 +49,33 @@ export function MessagesPage() {
     const file = event.target.files?.[0]; event.target.value = '';
     if (!file) return;
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024) { setError('Choose a JPG, PNG or WebP image under 8 MB.'); return; }
-    if (!browserSupabase || !conversationId) { setError('Private photo upload is not configured.'); return; }
+    if (!conversationId) { setError('Private photo upload is not configured.'); return; }
     setBusy(true); setError('');
     try {
-      const ext = file.type === 'image/jpeg' ? 'jpg' : file.type.split('/')[1];
-      const path = `${conversationId}/${profile.id}/${crypto.randomUUID()}.${ext}`;
-      const { error: uploadError } = await browserSupabase.storage.from('chat-attachments').upload(path, file, { contentType: file.type, upsert: false });
-      if (uploadError) throw uploadError;
-      await api.sendMessage(session.access_token, conversationId, { type: 'image', attachmentPath: path });
+      const path = await api.uploadChatAttachment(conversationId, file);
+      await api.sendMessage(session.user, conversationId, { type: 'image', attachmentPath: path });
       await Promise.all([loadMessages(), loadConversations()]);
     } catch (err) { setError(err.message || 'Unable to upload this photo.'); }
     finally { setBusy(false); }
   };
   const sendQuote = async (event) => {
     event.preventDefault(); setBusy(true); setError('');
-    try { await api.createQuotation(session.access_token, conversationId, quote); setShowQuote(false); setQuote({ labourCost: '', materialCost: '0', travelCost: '0', notes: '' }); await Promise.all([loadMessages(), loadConversations()]); }
+    try { await api.createQuotation(session.user, conversationId, quote); setShowQuote(false); setQuote({ labourCost: '', materialCost: '0', travelCost: '0', notes: '' }); await Promise.all([loadMessages(), loadConversations()]); }
     catch (err) { setError(err.code === 'CONTACT_DETAILS_BLOCKED' ? privacyMessage : err.message); }
     finally { setBusy(false); }
   };
   const respondQuote = async (quotationId, action) => {
-    setError(''); try { await api.respondToQuotation(session.access_token, quotationId, { action }); await Promise.all([loadMessages(), loadConversations()]); }
+    setError(''); try { await api.respondToQuotation(session.user, quotationId, { action }); await Promise.all([loadMessages(), loadConversations()]); }
     catch (err) { setError(err.message); }
   };
   const report = async (message) => {
     const reason = window.prompt('Why are you reporting this message?');
     if (!reason) return;
-    try { await api.reportMessage(session.access_token, message.id, reason); setError('Report sent to KaamConnect moderation.'); }
+    try { await api.reportMessage(session.user, message.id, reason); setError('Report sent to KaamConnect moderation.'); }
     catch (err) { setError(err.message); }
   };
 
-  if (!session?.access_token) return <section className="mx-auto max-w-2xl py-12"><div className="rounded-2xl border border-slate-200 bg-white p-6"><h1 className="text-xl font-bold">Sign in to view private messages</h1><button onClick={() => navigate('/account?next=/messages')} className="mt-4 rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white">Sign in</button></div></section>;
+  if (!session?.user) return <section className="mx-auto max-w-2xl py-12"><div className="rounded-2xl border border-slate-200 bg-white p-6"><h1 className="text-xl font-bold">Sign in to view private messages</h1><p className="mt-2 text-sm text-slate-600">Your conversations are private and only available to their participants.</p><div className="mt-4 flex flex-wrap gap-2"><button onClick={() => navigate('/account?reason=messaging&next=%2Fmessages')} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white">Sign in</button><button onClick={() => navigate('/account?mode=signup&role=customer&reason=messaging&next=%2Fmessages')} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700">Create customer account</button></div></div></section>;
   if (!profile) return <section className="mx-auto max-w-2xl py-12"><div role="status" className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">Setting up your secure account…</div></section>;
   return <section className="mx-auto max-w-7xl py-5 sm:py-8">
     <div className="mb-4 flex items-center gap-3"><button onClick={() => navigate(-1)} aria-label="Back" className="rounded-lg border border-slate-200 bg-white p-2"><ArrowLeft className="h-4 w-4" /></button><div><h1 className="text-2xl font-extrabold text-slate-900">Messages</h1><p className="text-xs text-slate-500">Private conversations connected to your jobs and bookings</p></div></div>

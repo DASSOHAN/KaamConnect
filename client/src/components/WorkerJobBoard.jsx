@@ -15,18 +15,18 @@ export const WorkerJobBoard = () => {
   const [notes, setNotes] = useState({});
 
   const load = useCallback(async () => {
-    if (!session?.access_token) { setLoading(false); return; }
+    if (!session?.user) { setLoading(false); return; }
     setLoading(true); setError('');
-    try { setJobs(await api.getWorkerJobsBoard(session.access_token)); }
+    try { setJobs(await api.getWorkerJobsBoard(session.user)); }
     catch (requestError) { setError(requestError.message || 'Unable to load available jobs.'); }
     finally { setLoading(false); }
-  }, [session?.access_token]);
+  }, [session?.user]);
   useEffect(() => { load(); }, [load]);
 
   const submitOffer = async (job) => {
     setSendingId(job.id); setError('');
     try {
-      const offer = await api.sendJobOffer(session.access_token, job.id, Number(prices[job.id]), notes[job.id] || '');
+      const offer = await api.sendJobOffer(session.user, job.id, Number(prices[job.id]), notes[job.id] || '');
       if (offer.conversationId) navigate(`/messages/${offer.conversationId}`);
       else setError('Offer sent. The customer can start a private conversation from the offer.');
     } catch (requestError) { setError(requestError.message || 'Unable to send your offer.'); }

@@ -13,6 +13,7 @@ export const Header = ({
   onOpenWorkerJobs, onOpenAdmin, onOpenMessages, unreadMessageCount = 0,
   onOpenAccount, onSignOut, isAuthenticated = false, locations = [],
   onJoinCustomer, onJoinWorker,
+  onBrowseJobs,
 }) => {
   const [isLocationOpen, setIsLocationOpen] = useState(false);
   const [isRadiusOpen, setIsRadiusOpen] = useState(false);
@@ -34,6 +35,7 @@ export const Header = ({
     <div className={mobile ? 'grid grid-cols-2 gap-2' : 'flex flex-wrap items-center gap-2'}>
       {hasActiveBooking && <NavButton onClick={() => { closeMenu(); onOpenActiveBooking?.(); }} icon={<Activity />} highlight>Live job</NavButton>}
       {currentRole === 'customer' && <NavButton onClick={() => { closeMenu(); onOpenMyJobs?.(); }} icon={<Clock />}>My Bookings</NavButton>}
+      {!isAuthenticated && <NavButton onClick={() => { closeMenu(); onBrowseJobs?.(); }} icon={<Briefcase />}>Browse jobs</NavButton>}
       {currentRole === 'worker' && <>
         <NavButton onClick={() => { closeMenu(); onOpenWorkerDashboard?.(); }} icon={<Briefcase />}>Worker dashboard</NavButton>
         <NavButton onClick={() => { closeMenu(); onOpenWorkerJobs?.(); }} icon={<Users />}>Available jobs</NavButton>

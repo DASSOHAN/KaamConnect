@@ -18,20 +18,20 @@ export const JobDetails = ({ onBack }) => {
   useEffect(() => {
     let active = true;
     setLoading(true); setError('');
-    api.getJob(id, session?.access_token).then((result) => { if (active) setJob(result); })
+    api.getJob(id, session?.user).then((result) => { if (active) setJob(result); })
       .catch((requestError) => { if (active) setError(requestError.message || 'Unable to load this job.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [id, attempt, session?.access_token]);
+  }, [id, attempt, session?.user]);
 
   useEffect(() => {
-    if (!session?.access_token || profile?.role !== 'customer') return;
-    api.getJobOffers(session.access_token, id).then(setOffers).catch(() => setOffers([]));
-  }, [id, session?.access_token, profile?.role, attempt]);
+    if (!session?.user || profile?.role !== 'customer') return;
+    api.getJobOffers(session.user, id).then(setOffers).catch(() => setOffers([]));
+  }, [id, session?.user, profile?.role, attempt]);
 
   const acceptOffer = async (offer) => {
     setAccepting(offer.id); setOfferError('');
-    try { const result = await api.acceptJobOffer(session.access_token, id, offer.id); if (result.booking?.conversationId) navigate(`/messages/${result.booking.conversationId}`); else navigate('/bookings'); }
+    try { const result = await api.acceptJobOffer(session.user, id, offer.id); if (result.booking?.conversationId) navigate(`/messages/${result.booking.conversationId}`); else navigate('/bookings'); }
     catch (err) { setOfferError(err.message); }
     finally { setAccepting(''); }
   };

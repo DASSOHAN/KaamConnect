@@ -6,12 +6,17 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "seed": "node database/seed.js"
+    "seed": "node database/seed.js",
+    "test": "node test/run_test.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.57.0",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "express-session": "^1.19.0",
+    "helmet": "^8.3.0",
+    "multer": "^2.5.0"
   }
 }

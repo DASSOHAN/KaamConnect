@@ -1,18 +1,23 @@
 // API Service connecting pure React frontend with Express backend
 
 const BASE_URL = '/api';
+let csrfToken = '';
+let csrfPromise;
+async function securityToken(){
+  if(csrfToken)return csrfToken;
+  csrfPromise ||= window.fetch(`${BASE_URL}/auth/csrf`,{credentials:'include'}).then(async r=>{const body=await r.json();if(!r.ok)throw new Error(body.message||'Unable to initialize request security.');csrfToken=body.data.token;return csrfToken;}).finally(()=>{csrfPromise=null;});
+  return csrfPromise;
+}
+async function apiFetch(url,options={}){
+  const method=String(options.method||'GET').toUpperCase(),headers={...(options.body && typeof options.body==='string'?{'Content-Type':'application/json'}:{}),...options.headers}; delete headers.Authorization;
+  if(!['GET','HEAD','OPTIONS'].includes(method))headers['X-CSRF-Token']=await securityToken();
+  return window.fetch(url,{...options,method,headers,credentials:'include'});
+}
 
 async function authorizedRequest(path, token, options = {}) {
   let res;
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
-      ...options,
-      headers: {
-        ...(options.body && typeof options.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
-        ...options.headers,
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    res = await apiFetch(`${BASE_URL}${path}`, options);
   } catch {
     throw new Error('KaamConnect API is unreachable. Start the Express server on port 5000 and retry.');
   }
@@ -21,13 +26,14 @@ async function authorizedRequest(path, token, options = {}) {
   try { json = responseText ? JSON.parse(responseText) : {}; }
   catch {
     if (res.status === 502 || res.status === 503) {
-      throw new Error('The Vite proxy could not reach the Express API. Confirm the backend is running on http://127.0.0.1:5000.');
+      throw new Error('The Vite proxy could not reach the Express API. Confirm the backend is running on http://localhost:5000, then restart Vite.');
     }
     throw new Error(`The API returned an unreadable response (HTTP ${res.status}).`);
   }
+  if (json.data?.csrfToken) csrfToken = json.data.csrfToken;
   if (!res.ok || json.success === false) {
     const error = new Error(json.message || (res.status === 502
-      ? 'The Express API is unavailable through the Vite proxy. Start the backend and retry.'
+      ? 'The Express API is unavailable through the Vite proxy. Confirm the backend is running on http://localhost:5000, then restart Vite.'
       : `Request failed (HTTP ${res.status}).`));
     error.status = res.status;
     error.code = json.code;
@@ -37,6 +43,13 @@ async function authorizedRequest(path, token, options = {}) {
 }
 
 export const api = {
+  initializeSecurity: securityToken,
+  getCurrentUser: () => authorizedRequest('/auth/me'),
+  register: (details) => authorizedRequest('/auth/register', null, { method: 'POST', body: JSON.stringify(details) }),
+  login: (details) => authorizedRequest('/auth/login', null, { method: 'POST', body: JSON.stringify(details) }),
+  logout: () => authorizedRequest('/auth/logout', null, { method: 'POST' }),
+  uploadWorkerPhoto: async (file) => {const body=new FormData();body.append('photo',file);const res=await apiFetch(`${BASE_URL}/workers/photo`,{method:'POST',body});const json=await res.json();if(!res.ok)throw new Error(json.message||'Unable to upload profile photo.');return json.data.url;},
+  uploadChatAttachment: async (conversationId,file) => {const body=new FormData();body.append('photo',file);const res=await apiFetch(`${BASE_URL}/conversations/${encodeURIComponent(conversationId)}/attachments`,{method:'POST',body});const json=await res.json();if(!res.ok)throw new Error(json.message||'Unable to upload chat image.');return json.data.attachmentPath;},
   getAccountProfile: (token) => authorizedRequest('/account/profile', token),
   saveAccountProfile: (token, profile) => authorizedRequest('/account/profile', token, { method: 'POST', body: JSON.stringify(profile) }),
   getConversations: (token) => authorizedRequest('/conversations', token),
@@ -53,7 +66,7 @@ export const api = {
   moderateAccount: (token, userId, isSuspended) => authorizedRequest(`/admin/users/${encodeURIComponent(userId)}/suspension`, token, { method: 'PATCH', body: JSON.stringify({ isSuspended }) }),
   moderateConversation: (token, conversationId, status, notes) => authorizedRequest(`/admin/conversations/${encodeURIComponent(conversationId)}`, token, { method: 'PATCH', body: JSON.stringify({ status, notes }) }),
   createJob: async (job, token) => {
-    const res = await fetch(`${BASE_URL}/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(job) });
+    const res = await apiFetch(`${BASE_URL}/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(job) });
     const json = await res.json();
     if (!res.ok || !json.success) throw new Error(json.message || 'Unable to post your job');
     return json.data;
@@ -62,9 +75,15 @@ export const api = {
   getJobs: async (customerId) => {
     const params = new URLSearchParams();
     if (customerId) params.set('customerId', customerId);
-    const res = await fetch(`${BASE_URL}/jobs?${params}`);
+    const res = await apiFetch(`${BASE_URL}/jobs?${params}`);
     const json = await res.json();
     if (!res.ok || !json.success) throw new Error(json.message || 'Unable to load jobs');
+    return Array.isArray(json.data) ? json.data : [];
+  },
+  getPublicJobs: async () => {
+    const res = await apiFetch(`${BASE_URL}/jobs`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.message || 'Unable to load public jobs');
     return Array.isArray(json.data) ? json.data : [];
   },
 
@@ -74,7 +93,7 @@ export const api = {
   acceptJobOffer: (token, jobId, offerId) => authorizedRequest(`/jobs/${encodeURIComponent(jobId)}/accept-offer`, token, { method: 'POST', body: JSON.stringify({ offerId }) }),
 
   getJob: async (jobId, token) => {
-    const res = await fetch(`${BASE_URL}/jobs/${encodeURIComponent(jobId)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const res = await apiFetch(`${BASE_URL}/jobs/${encodeURIComponent(jobId)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     const json = await res.json();
     if (!res.ok || !json.success) throw new Error(json.message || 'Unable to load this job');
     return json.data;
@@ -83,7 +102,7 @@ export const api = {
   // Health
   checkHealth: async () => {
     try {
-      const res = await fetch(`${BASE_URL}/health`);
+      const res = await apiFetch(`${BASE_URL}/health`);
       return await res.json();
     } catch (e) {
       console.warn('Backend not responding yet, fallback active:', e);
@@ -94,7 +113,7 @@ export const api = {
   // Locations
   getLocations: async () => {
     try {
-      const res = await fetch(`${BASE_URL}/locations`);
+      const res = await apiFetch(`${BASE_URL}/locations`);
       const json = await res.json();
       return json.data;
     } catch (e) {
@@ -105,7 +124,7 @@ export const api = {
   // Services
   getServices: async () => {
     try {
-      const res = await fetch(`${BASE_URL}/services`);
+      const res = await apiFetch(`${BASE_URL}/services`);
       const json = await res.json();
       return json.data;
     } catch (e) {
@@ -120,7 +139,7 @@ export const api = {
     if (maxDistance) params.append('maxDistance', maxDistance);
     if (query) params.append('q', query);
 
-    const res = await fetch(`${BASE_URL}/workers?${params.toString()}`);
+    const res = await apiFetch(`${BASE_URL}/workers?${params.toString()}`);
     if (!res.ok) {
       throw new Error(`Worker API returned HTTP ${res.status}`);
     }
@@ -131,16 +150,22 @@ export const api = {
     }
     return json.data;
   },
+  getWorkerReviews: async (workerId) => {
+    const res = await apiFetch(`${BASE_URL}/workers/${encodeURIComponent(workerId)}/reviews`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.message || 'Unable to load public reviews');
+    return Array.isArray(json.data) ? json.data : [];
+  },
 
   getBookings: async (customerId, token) => {
-    const res = await fetch(`${BASE_URL}/bookings?customerId=${encodeURIComponent(customerId || '')}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const res = await apiFetch(`${BASE_URL}/bookings?customerId=${encodeURIComponent(customerId || '')}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     if (!res.ok) throw new Error(`Bookings API returned HTTP ${res.status}`);
     const json = await res.json();
     return Array.isArray(json.data) ? json.data : [];
   },
 
   cancelBooking: async (bookingId, customerId, token) => {
-    const res = await fetch(`${BASE_URL}/bookings/${bookingId}/cancel`, {
+    const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/cancel`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ customerId }),
@@ -151,7 +176,7 @@ export const api = {
   },
 
   registerWorker: async (profile, token) => {
-    const res = await fetch(`${BASE_URL}/workers/register`, {
+    const res = await apiFetch(`${BASE_URL}/workers/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(profile),
@@ -168,14 +193,14 @@ export const api = {
   getMyWorkerProfile: (token) => authorizedRequest('/workers/me', token),
   getWorkerJobs: async (workerId, ownerId, token) => {
     const query = ownerId ? `?ownerId=${encodeURIComponent(ownerId)}` : '';
-    const res = await fetch(`${BASE_URL}/workers/${workerId}/jobs${query}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const res = await apiFetch(`${BASE_URL}/workers/${workerId}/jobs${query}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     const json = await res.json();
     if (!res.ok) throw new Error(json.message || 'Unable to load worker jobs');
     return Array.isArray(json.data) ? json.data : [];
   },
 
   updateWorkerProfile: async (workerId, profile, token) => {
-    const res = await fetch(`${BASE_URL}/workers/${workerId}/profile`, {
+    const res = await apiFetch(`${BASE_URL}/workers/${workerId}/profile`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(profile),
@@ -186,7 +211,7 @@ export const api = {
   },
 
   updateWorkerJobStatus: async (bookingId, workerId, ownerId, status, token) => {
-    const res = await fetch(`${BASE_URL}/bookings/${bookingId}/worker-status`, {
+    const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/worker-status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ workerId, ownerId, status }),
@@ -199,7 +224,7 @@ export const api = {
   // Toggle KYC
   toggleWorkerKyc: async (workerId, kycVerified, token) => {
     try {
-      const res = await fetch(`${BASE_URL}/workers/${workerId}/kyc`, {
+      const res = await apiFetch(`${BASE_URL}/workers/${workerId}/kyc`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ kycVerified }),
@@ -213,7 +238,7 @@ export const api = {
   // Toggle Duty
   toggleWorkerDuty: async (workerId, isAvailable, ownerId, token) => {
     try {
-      const res = await fetch(`${BASE_URL}/workers/${workerId}/duty`, {
+      const res = await apiFetch(`${BASE_URL}/workers/${workerId}/duty`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ isAvailable, ownerId }),
@@ -226,7 +251,7 @@ export const api = {
 
   // Create Booking
   createBooking: async (bookingData, token) => {
-    const res = await fetch(`${BASE_URL}/bookings`, {
+    const res = await apiFetch(`${BASE_URL}/bookings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(bookingData),
@@ -239,7 +264,7 @@ export const api = {
   // Update Booking Status
   updateBookingStatus: async (bookingId, status, token) => {
     try {
-      const res = await fetch(`${BASE_URL}/bookings/${bookingId}/status`, {
+      const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ status }),
@@ -254,7 +279,7 @@ export const api = {
   // Review Booking
   reviewBooking: async (bookingId, rating, tipAmount, reviewComment, token) => {
     try {
-      const res = await fetch(`${BASE_URL}/bookings/${bookingId}/review`, {
+      const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ rating, tipAmount, reviewComment }),
@@ -269,7 +294,7 @@ export const api = {
   // Analytics
   getAnalytics: async () => {
     try {
-      const res = await fetch(`${BASE_URL}/analytics`);
+      const res = await apiFetch(`${BASE_URL}/analytics`);
       const json = await res.json();
       return json.data;
     } catch (e) {
@@ -280,7 +305,7 @@ export const api = {
   // Worker Incoming Job
   getIncomingJob: async () => {
     try {
-      const res = await fetch(`${BASE_URL}/jobs/incoming`);
+      const res = await apiFetch(`${BASE_URL}/jobs/incoming`);
       const json = await res.json();
       return json.data;
     } catch (e) {
@@ -291,7 +316,7 @@ export const api = {
   // Worker Accept Job
   acceptJob: async () => {
     try {
-      const res = await fetch(`${BASE_URL}/jobs/incoming/accept`, {
+      const res = await apiFetch(`${BASE_URL}/jobs/incoming/accept`, {
         method: 'POST',
       });
       return await res.json();

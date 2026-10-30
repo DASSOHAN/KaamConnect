@@ -21,6 +21,7 @@ import { useAuth } from './contexts/AuthContext';
 import { AccountPage } from './components/AccountPage';
 import { WorkerJobBoard } from './components/WorkerJobBoard';
 import { MessagesPage } from './components/MessagesPage';
+import { PublicJobBoard } from './components/PublicJobBoard';
 import { AdminMessageModeration } from './components/AdminMessageModeration';
 import { TRANSLATIONS } from './utils/i18n';
 import { getCategoryCatalog } from './utils/workerCategories';
@@ -96,24 +97,24 @@ export function App() {
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
 
   useEffect(() => {
-    if (!session?.access_token) { setUnreadMessageCount(0); return undefined; }
+    if (!session?.user) { setUnreadMessageCount(0); return undefined; }
     let active = true;
-    const refresh = () => api.getUnreadMessageCount(session.access_token).then((data) => { if (active) setUnreadMessageCount(Number(data?.count || 0)); }).catch(() => {});
+    const refresh = () => api.getUnreadMessageCount(session.user).then((data) => { if (active) setUnreadMessageCount(Number(data?.count || 0)); }).catch(() => {});
     refresh(); const timer = window.setInterval(refresh, 20000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [session?.access_token, pathname]);
+  }, [session?.user, pathname]);
 
   const openBookingChat = async (booking) => {
-    if (!session?.access_token) { navigate('/account?next=/messages'); return; }
+    if (!session?.user) { navigate('/account?next=/messages'); return; }
     try {
-      const conversation = await api.createConversation(session.access_token, { bookingId: booking.id });
+      const conversation = await api.createConversation(session.user, { bookingId: booking.id });
       navigate(`/messages/${conversation.id}`);
     } catch (error) { showToast('Unable to open chat', error.message, 'warning'); }
   };
   const openJobChat = async (jobId, workerId) => {
-    if (!session?.access_token) { navigate('/account?next=/messages'); return; }
+    if (!session?.user) { navigate('/account?next=/messages'); return; }
     try {
-      const conversation = await api.createConversation(session.access_token, { jobId, workerId });
+      const conversation = await api.createConversation(session.user, { jobId, workerId });
       navigate(`/messages/${conversation.id}`);
     } catch (error) { showToast('Unable to open chat', error.message, 'warning'); }
   };
@@ -150,8 +151,11 @@ export function App() {
     if (authLoading) return;
     const workerOnly = ['/worker-dashboard', '/dashboard', '/worker-jobs', '/register-worker'].includes(pathname);
     const adminOnly = pathname.startsWith('/admin');
-    const customerOnly = ['/bookings', '/jobs', '/post-job'].includes(pathname) || pathname.startsWith('/jobs/');
-    if (workerOnly && !session) navigate(`/account?next=${encodeURIComponent(pathname)}`, { replace: true });
+    const customerOnly = ['/bookings', '/post-job'].includes(pathname);
+    if (workerOnly && !session) {
+      const reason = pathname === '/worker-jobs' ? 'quotation' : 'dashboard';
+      navigate(`/account?mode=signup&role=worker&reason=${reason}&next=${encodeURIComponent(pathname)}`, { replace: true });
+    }
     else if (workerOnly && profile?.role !== 'worker') navigate('/', { replace: true });
     else if (profile?.role === 'worker' && !profile.worker_profile_complete && ['/worker-dashboard', '/dashboard', '/worker-jobs'].includes(pathname)) navigate('/register-worker', { replace: true });
     else if (adminOnly && profile?.role !== 'admin') navigate('/', { replace: true });
@@ -159,9 +163,9 @@ export function App() {
   }, [authLoading, pathname, session, profile?.role, profile?.worker_profile_complete, navigate]);
 
   useEffect(() => {
-    if (!session?.access_token || profile?.role !== 'worker' || !profile.worker_profile_complete) return undefined;
+    if (!session?.user || profile?.role !== 'worker' || !profile.worker_profile_complete) return undefined;
     let active = true;
-    api.getMyWorkerProfile(session.access_token).then((worker) => {
+    api.getMyWorkerProfile(session.user).then((worker) => {
       if (!active || !worker?.id) return;
       setCurrentWorkerId(worker.id);
       setWorkerOwnerId(profile.id);
@@ -170,7 +174,7 @@ export function App() {
       setWorkers((current) => current.some((item) => item.id === worker.id) ? current.map((item) => item.id === worker.id ? worker : item) : [...current, worker]);
     }).catch((error) => console.error('Unable to load your worker profile:', error));
     return () => { active = false; };
-  }, [session?.access_token, profile?.id, profile?.role, profile?.worker_profile_complete]);
+  }, [session?.user, profile?.id, profile?.role, profile?.worker_profile_complete]);
 
   const selectCategorySuggestion = (category) => {
     setSearchQuery('');
@@ -271,7 +275,13 @@ export function App() {
   }, [workerLoadAttempt]);
 
   // Handlers for booking triggers
+  const requireAccount = (reason, next, role = 'customer') => {
+    const query = new URLSearchParams({ mode: 'signup', role, reason, next });
+    navigate(`/account?${query.toString()}`);
+  };
+
   const handleOpenBookingForCategory = (category) => {
+    if (!session) { requireAccount('booking', `${pathname}${location.search}`, 'customer'); showToast('Account needed', 'Sign in or create a customer account to book this service.', 'info'); return; }
     if (!session) { navigate('/account?mode=signup&role=customer&next=%2Fbookings'); showToast('Sign in to book a service', 'A customer account is required to create and manage bookings.', 'info'); return; }
     if (profile?.role !== 'customer') { showToast('Customer account required', 'Sign in with a customer account to book a service.', 'warning'); return; }
     setBookingPreselectedCat(category);
@@ -280,6 +290,7 @@ export function App() {
   };
 
   const handleOpenBookingForWorker = (worker) => {
+    if (!session) { requireAccount('booking', `${pathname}${location.search}`, 'customer'); showToast('Account needed', 'Sign in or create a customer account to book this worker.', 'info'); return; }
     if (!session) { navigate('/account?mode=signup&role=customer&next=%2Fbookings'); showToast('Sign in to book a service', 'A customer account is required to create and manage bookings.', 'info'); return; }
     if (profile?.role !== 'customer') { showToast('Customer account required', 'Sign in with a customer account to book a service.', 'warning'); return; }
     const cat = services.find((c) => c.id === worker.tradeId) || services[0];
@@ -291,7 +302,7 @@ export function App() {
   const handleBookingConfirmed = async (newBookingData) => {
     if (!session || profile?.role !== 'customer') { setIsBookingModalOpen(false); navigate('/account?mode=signup&role=customer&next=%2Fbookings'); return; }
     let createdBooking;
-    try { createdBooking = await api.createBooking({ ...newBookingData, customerId }, session?.access_token); }
+    try { createdBooking = await api.createBooking({ ...newBookingData, customerId }, session?.user); }
     catch (error) { showToast('Booking could not be created', error.message, 'warning'); return; }
     const finalBooking = createdBooking || {
       id: `BK-KLY-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -317,7 +328,7 @@ export function App() {
   const handleUpdateBookingStatus = async (newStatus) => {
     if (!activeBooking) return;
     if (profile?.role !== 'worker') { showToast('Worker update required', 'Only the assigned worker can change booking progress.', 'info'); return; }
-    await api.updateBookingStatus(activeBooking.id, newStatus, session?.access_token);
+    await api.updateBookingStatus(activeBooking.id, newStatus, session?.user);
     setActiveBooking((prev) => prev ? { ...prev, status: newStatus } : null);
     
     if (newStatus === 'arrived') {
@@ -331,7 +342,7 @@ export function App() {
 
   const handleCompleteBooking = async (rating, tip, review) => {
     if (!activeBooking) return;
-    await api.reviewBooking(activeBooking.id, rating, tip, review, session?.access_token);
+    await api.reviewBooking(activeBooking.id, rating, tip, review, session?.user);
     const finalAmount = activeBooking.finalPrice + tip;
     showToast(
       'Thank you!',
@@ -341,7 +352,7 @@ export function App() {
   };
 
   const handleToggleWorkerKyc = async (workerId, newKyc) => {
-    await api.toggleWorkerKyc(workerId, newKyc, session?.access_token);
+    await api.toggleWorkerKyc(workerId, newKyc, session?.user);
     setWorkers((prev) =>
       prev.map((w) => (w.id === workerId ? { ...w, kycVerified: newKyc, aadhaarVerified: newKyc } : w))
     );
@@ -381,12 +392,13 @@ export function App() {
           onOpenWorkerDashboard={() => navigateTo('/worker-dashboard')}
           onOpenWorkerJobs={() => navigateTo('/worker-jobs')}
           onOpenAdmin={() => navigateTo('/admin')}
-          onOpenMessages={() => navigateTo('/messages')}
+          onOpenMessages={() => session ? navigateTo('/messages') : requireAccount('messaging', `${pathname}${location.search}`, 'customer')}
           unreadMessageCount={unreadMessageCount}
           onOpenAccount={() => navigateTo('/account')}
           onSignOut={async () => { try { await signOut(); navigate('/', { replace: true }); } catch (error) { showToast('Unable to sign out', error.message, 'warning'); } }}
           onJoinCustomer={() => navigateTo('/account?mode=signup&role=customer')}
           onJoinWorker={() => navigateTo('/account?mode=signup&role=worker')}
+          onBrowseJobs={() => navigateTo('/jobs')}
           isAuthenticated={!!session}
           locations={locations}
         />
@@ -408,6 +420,8 @@ export function App() {
               onBack={() => navigateTo('/')}
               onSuccess={handleWorkerRegistered}
             /> : <section className="mx-auto max-w-xl py-12"><div className="rounded-2xl border border-slate-200 bg-white p-6"><h1 className="text-xl font-bold">Worker profile is ready</h1><p className="mt-2 text-sm text-slate-600">Your registered profile is available from the worker dashboard.</p><button type="button" onClick={() => navigate('/worker-dashboard')} className="mt-4 rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white">Open worker dashboard</button></div></section>
+          ) : pathname === '/jobs' && (!session || profile?.role === 'worker') ? (
+            <PublicJobBoard onOpenJob={(job) => navigateTo(`/jobs/${encodeURIComponent(job.id)}`)} onSignIn={() => profile?.role === 'worker' ? navigateTo('/worker-jobs') : requireAccount('quotation', '/jobs', 'worker')} />
           ) : currentRole === 'customer' && (pathname === '/bookings' || pathname === '/jobs') ? (
             <CustomerJobs
               customerId={customerId}
@@ -417,7 +431,7 @@ export function App() {
             />
           ) : currentRole === 'customer' && pathname === '/post-job' ? (
             <AddJob services={services} locations={locations} customerId={customerId} workers={workers} onBack={() => navigateTo('/')} />
-          ) : currentRole === 'customer' && pathname.match(/^\/jobs\/[^/]+\/?$/) ? (
+          ) : pathname.match(/^\/jobs\/[^/]+\/?$/) ? (
             <JobDetails onBack={() => navigateTo('/post-job')} />
           ) : currentRole === 'customer' && activeCategory ? (
             <CategoryResultsPage
@@ -452,7 +466,7 @@ export function App() {
                 <label htmlFor="worker-search" className="mb-2 block text-sm font-bold text-slate-900">
                   Find the right worker for your job
                 </label>
-                <div className="relative z-50" ref={searchContainerRef}>
+                <div className="relative" ref={searchContainerRef}>
                   <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-blue-600" aria-hidden="true" />
                   <input
                     id="worker-search"
@@ -481,7 +495,7 @@ export function App() {
                   )}
                   {isSearchOpen && categorySuggestions.length > 0 && (
                     <div
-                      className="absolute left-0 right-0 top-full mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card"
+                      className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card"
                       role="listbox"
                       aria-label="Category suggestions"
                     >

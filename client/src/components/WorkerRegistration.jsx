@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { ArrowLeft, CheckCircle2, ImagePlus } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import { browserSupabase } from '../lib/supabase';
 
 const categoryOptions = [
   ['electrician', 'Electrician'], ['plumber', 'Plumber'], ['carpenter', 'Carpenter'],
@@ -14,7 +13,14 @@ const initialForm = { name: '', phone: '', email: '', tradeId: 'electrician', tr
 
 export const WorkerRegistration = ({ ownerId, onBack, onSuccess }) => {
   const { session, profile } = useAuth();
-  const [form, setForm] = useState(() => ({ ...initialForm, name: profile?.full_name || '', phone: profile?.phone || '', email: session?.user?.email || '' }));
+  const [form, setForm] = useState(() => ({
+    ...initialForm,
+    name: profile?.full_name || session?.user?.user_metadata?.full_name || '',
+    phone: profile?.phone || session?.user?.user_metadata?.phone || '',
+    email: session?.user?.email || '',
+    tradeId: session?.user?.user_metadata?.trade_id || initialForm.tradeId,
+    locality: session?.user?.user_metadata?.locality || '',
+  }));
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState('');
   const [errors, setErrors] = useState({});
@@ -28,13 +34,9 @@ export const WorkerRegistration = ({ ownerId, onBack, onSuccess }) => {
     try {
       let avatar = '';
       if (photoFile) {
-        const ext = photoFile.type === 'image/jpeg' ? 'jpg' : photoFile.type.split('/')[1];
-        const path = `${profile.id}/${crypto.randomUUID()}.${ext}`;
-        const { error: uploadError } = await browserSupabase.storage.from('worker-avatars').upload(path, photoFile, { contentType: photoFile.type, upsert: false });
-        if (uploadError) throw new Error(`Profile photo upload failed: ${uploadError.message}`);
-        avatar = browserSupabase.storage.from('worker-avatars').getPublicUrl(path).data.publicUrl;
+        avatar = await api.uploadWorkerPhoto(photoFile);
       }
-      const saved = await api.registerWorker({ ...form, name: profile.full_name, phone: profile.phone, email: session.user.email, avatar, ownerId, skills: form.skills.split(',').map((skill) => skill.trim()).filter(Boolean), experienceYears: Number(form.experienceYears), halfDayRate: Number(form.halfDayRate), dailyRate: Number(form.dailyRate) }, session?.access_token);
+      const saved = await api.registerWorker({ ...form, name: profile.full_name, phone: profile.phone, email: session.user.email, avatar, ownerId, skills: form.skills.split(',').map((skill) => skill.trim()).filter(Boolean), experienceYears: Number(form.experienceYears), halfDayRate: Number(form.halfDayRate), dailyRate: Number(form.dailyRate) }, session?.user);
       onSuccess(saved);
     } catch (saveError) {
       setError(saveError.message);
