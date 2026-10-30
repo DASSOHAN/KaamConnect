@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Briefcase, KeyRound, LoaderCircle, Mail, UserRound } from 'lucide-react';
 import { api } from '../services/api';
-import { browserSupabase, supabaseConfigured } from '../services/supabase';
+import { browserSupabase, supabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
 export const AccountPage = () => {
@@ -20,6 +20,13 @@ export const AccountPage = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    if (!session || profile) return;
+    setFullName(session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || '');
+    setPhone(session.user.user_metadata?.phone || '');
+    setRole(session.user.user_metadata?.role === 'worker' ? 'worker' : 'customer');
+  }, [session?.user?.id, profile]);
 
   useEffect(() => {
     if (requestedMode === 'signup') setMode('signup');
@@ -49,7 +56,7 @@ export const AccountPage = () => {
         return;
       }
       if (mode === 'forgot') {
-        const { error: resetError } = await browserSupabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${window.location.origin}/account?mode=recovery` });
+        const { error: resetError } = await browserSupabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo: `${window.location.origin}/account?mode=recovery` });
         if (resetError) throw resetError;
         setNotice('If an account uses that email, Supabase will send a password reset link.');
         return;
@@ -59,7 +66,7 @@ export const AccountPage = () => {
         const normalizedPhone = phone.replace(/\D/g, '');
         if (!/^[6-9]\d{9}$/.test(normalizedPhone)) throw new Error('Enter a valid 10-digit Indian mobile number.');
         const { data, error: authError } = await browserSupabase.auth.signUp({
-          email: email.trim(), password,
+          email: email.trim().toLowerCase(), password,
           options: { data: { full_name: fullName.trim(), phone: normalizedPhone, role } },
         });
         if (authError) throw authError;
@@ -72,7 +79,7 @@ export const AccountPage = () => {
         redirectAfterAuth(account);
         return;
       }
-      const { data, error: authError } = await browserSupabase.auth.signInWithPassword({ email: email.trim(), password });
+      const { data, error: authError } = await browserSupabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
       if (authError) throw authError;
       let account;
       try { account = await api.getAccountProfile(data.session.access_token); }
@@ -89,8 +96,22 @@ export const AccountPage = () => {
     finally { setBusy(false); }
   };
 
+  const completeMissingProfile = async (event) => {
+    event.preventDefault(); setBusy(true); setError(''); setNotice('');
+    try {
+      if (!session?.access_token) throw new Error('Your session expired. Please sign in again.');
+      if (fullName.trim().length < 2) throw new Error('Enter your name.');
+      const normalizedPhone = phone.replace(/\D/g, '');
+      if (!/^[6-9]\d{9}$/.test(normalizedPhone)) throw new Error('Enter a valid 10-digit Indian mobile number.');
+      const account = await api.saveAccountProfile(session.access_token, { fullName: fullName.trim(), phone: normalizedPhone, role });
+      await refreshProfile();
+      redirectAfterAuth(account);
+    } catch (profileError) { setError(profileError.message || 'Unable to save your account profile.'); }
+    finally { setBusy(false); }
+  };
+
   if (mode === 'recovery' && session) return <AuthCard title="Choose a new password" subtitle="Use at least 8 characters for your KaamConnect account." onBack={() => navigate('/')}>
-    <form onSubmit={submit} className="space-y-4"><PasswordField value={password} onChange={setPassword} autoComplete="new-password" label="New password" />{error && <Feedback error>{error}</Feedback>}{notice && <Feedback>{notice}</Feedback>}<SubmitButton busy={busy} disabled={!supabaseConfigured}>Update password</SubmitButton></form>
+    <form onSubmit={submit} className="space-y-4"><PasswordField value={password} onChange={setPassword} autoComplete="new-password" label="New password" />{error && <Feedback error>{error}</Feedback>}{notice && <Feedback>{notice}</Feedback>}<SubmitButton busy={busy}>Update password</SubmitButton></form>
   </AuthCard>;
 
   if (session && profile) return <section className="mx-auto max-w-2xl py-8 sm:py-12">
@@ -103,6 +124,15 @@ export const AccountPage = () => {
   </section>;
 
   if (loading) return <section className="mx-auto max-w-lg py-12"><div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">Restoring your secure session…</div></section>;
+  if (session && !profile) return <AuthCard title="Complete your KaamConnect account" subtitle="Your Supabase login is active. Add the profile details KaamConnect needs to continue." onBack={() => navigate('/')}>
+    <form onSubmit={completeMissingProfile} className="space-y-4">
+      <TextField label="Full name" value={fullName} onChange={setFullName} icon={<UserRound />} autoComplete="name" required />
+      <TextField label="Mobile number" value={phone} onChange={setPhone} type="tel" autoComplete="tel" placeholder="10-digit mobile number" required />
+      <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1"><RoleOption active={role === 'customer'} onClick={() => setRole('customer')}>Customer</RoleOption><RoleOption active={role === 'worker'} onClick={() => setRole('worker')}>Worker</RoleOption></div>
+      {error && <Feedback error>{error}</Feedback>}
+      <SubmitButton busy={busy}>{busy ? 'Saving profile…' : 'Continue'}</SubmitButton>
+    </form>
+  </AuthCard>;
   const title = mode === 'signup' ? role === 'worker' ? 'Join as a worker' : 'Join as a customer' : mode === 'forgot' ? 'Reset your password' : 'Sign in to KaamConnect';
   return <AuthCard title={title} subtitle={mode === 'signup' ? 'Create a secure KaamConnect account to get started.' : mode === 'forgot' ? 'We will email you a secure password reset link.' : 'Your account keeps bookings and conversations connected to your work.'} onBack={() => navigate('/')}>
     {!supabaseConfigured && <Feedback warning>Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in client/.env to enable secure sign-in.</Feedback>}
@@ -113,7 +143,7 @@ export const AccountPage = () => {
       {mode !== 'forgot' && <PasswordField value={password} onChange={setPassword} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} label={mode === 'recovery' ? 'New password' : 'Password'} />}
       {mode === 'signin' && <div className="text-right"><button type="button" onClick={() => { setMode('forgot'); setError(''); setNotice(''); }} className="text-xs font-bold text-blue-700 hover:underline">Forgot password?</button></div>}
       {error && <Feedback error>{error}</Feedback>}{notice && <Feedback>{notice}</Feedback>}
-      <SubmitButton busy={busy} disabled={!supabaseConfigured}>{busy ? 'Please wait…' : mode === 'signup' ? `Create ${role} account` : mode === 'forgot' ? 'Send reset link' : 'Sign in'}</SubmitButton>
+      <SubmitButton busy={busy}>{busy ? 'Please wait…' : mode === 'signup' ? `Create ${role} account` : mode === 'forgot' ? 'Send reset link' : 'Sign in'}</SubmitButton>
     </form>
     <p className="mt-5 text-center text-sm text-slate-600">{mode === 'signup' ? 'Already registered?' : mode === 'signin' ? 'New to KaamConnect?' : 'Remember your password?'} <button type="button" onClick={() => { setMode(mode === 'signup' || mode === 'forgot' ? 'signin' : 'signup'); setError(''); setNotice(''); }} className="font-bold text-blue-700">{mode === 'signup' || mode === 'forgot' ? 'Sign in' : 'Join KaamConnect'}</button></p>
   </AuthCard>;

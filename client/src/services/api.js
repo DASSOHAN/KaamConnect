@@ -3,17 +3,32 @@
 const BASE_URL = '/api';
 
 async function authorizedRequest(path, token, options = {}) {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      ...(options.body && typeof options.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
-      ...options.headers,
-      Authorization: `Bearer ${token}`,
-    },
-  });
-  const json = await res.json().catch(() => ({}));
+  let res;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        ...(options.body && typeof options.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
+        ...options.headers,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  } catch {
+    throw new Error('KaamConnect API is unreachable. Start the Express server on port 5000 and retry.');
+  }
+  const responseText = await res.text();
+  let json = {};
+  try { json = responseText ? JSON.parse(responseText) : {}; }
+  catch {
+    if (res.status === 502 || res.status === 503) {
+      throw new Error('The Vite proxy could not reach the Express API. Confirm the backend is running on http://127.0.0.1:5000.');
+    }
+    throw new Error(`The API returned an unreadable response (HTTP ${res.status}).`);
+  }
   if (!res.ok || json.success === false) {
-    const error = new Error(json.message || `Request failed (${res.status})`);
+    const error = new Error(json.message || (res.status === 502
+      ? 'The Express API is unavailable through the Vite proxy. Start the backend and retry.'
+      : `Request failed (HTTP ${res.status}).`));
     error.status = res.status;
     error.code = json.code;
     throw error;

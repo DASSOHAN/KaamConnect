@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
-import { browserSupabase, supabaseConfigured } from '../services/supabase';
+import { browserSupabase, supabaseConfigured } from '../lib/supabase';
 
 const AuthContext = createContext(null);
 
@@ -62,6 +62,9 @@ export function AuthProvider({ children }) {
       if (!browserSupabase) return;
       const { error } = await browserSupabase.auth.signOut();
       if (error) throw error;
+      setSession(null);
+      setProfile(null);
+      setLoading(false);
     },
   }), [session, profile, loading]);
 
