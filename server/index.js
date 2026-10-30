@@ -10,6 +10,7 @@ import {
 } from './data.js';
 import { dbResult, supabase, supabaseConfigured } from './database/client.js';
 import { checkSupabaseConnection, supabaseUrl } from './supabase.js';
+import { buildElectronicsCareCatalog, validateElectronicsCareRequest } from './electronicsCare.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -132,6 +133,15 @@ app.get('/api/services', async (req, res) => {
   res.json({ success: true, data: services });
 });
 
+app.get('/api/electronics-care/catalog', async (_req, res) => {
+  if (supabaseConfigured) {
+    const { data, error } = await dbResult(supabase.from('services').select('id, service_tasks(id, base_price)').eq('active', true));
+    if (error) return res.status(503).json({ success: false, message: 'Unable to load configured appliance service prices.' });
+    return res.json({ success: true, data: buildElectronicsCareCatalog(data) });
+  }
+  res.json({ success: true, data: buildElectronicsCareCatalog(services) });
+});
+
 const workerFromDb = (row) => ({
   ...(row.metadata || {}), id: row.id, legacyId: row.legacy_id, ownerId: row.metadata?.ownerId,
   name: row.users?.full_name || row.metadata?.name || 'KaamConnect worker',
@@ -153,7 +163,7 @@ const bookingFromDb = (row) => {
   const { customerPhone: _privatePhone, ...safeMetadata } = row.metadata || {};
   return ({
   ...safeMetadata, id: row.id, customerId: row.metadata?.customerId || row.customer_id,
-  serviceId: row.service_id, serviceName: row.services?.name || row.metadata?.serviceName || row.service_id,
+  serviceId: row.service_id, serviceName: row.metadata?.serviceName || row.services?.name || row.service_id,
   taskId: row.task_id, taskName: row.service_tasks?.name || row.metadata?.taskName || '',
   workerId: row.worker_id, worker: row.workers ? workerFromDb(row.workers) : null,
   bookingType: row.booking_type, scheduledDate: row.scheduled_date, scheduledSlot: row.scheduled_slot,
@@ -651,6 +661,100 @@ app.patch('/api/workers/:id/rates', optionalAuth, async (req, res) => {
   savePersistentState();
 
   res.json({ success: true, data: workers[workerIndex] });
+});
+
+// Home Electronics Care is stored as one parent booking; its priced appliance lines live in metadata.
+app.post('/api/electronics-care/bookings', optionalAuth, async (req, res) => {
+  let catalog;
+  if (supabaseConfigured) {
+    const { data, error } = await dbResult(supabase.from('services').select('id, service_tasks(id, base_price)').eq('active', true));
+    if (error) return res.status(503).json({ success: false, message: 'Unable to validate configured appliance service prices.' });
+    catalog = buildElectronicsCareCatalog(data);
+  } else {
+    catalog = buildElectronicsCareCatalog(services);
+  }
+  const checked = validateElectronicsCareRequest(req.body, catalog);
+  if (checked.error) return res.status(400).json({ success: false, message: checked.error });
+  const request = checked.value;
+  const body = req.body || {};
+  const summary = request.lineItems.map((line) => `${line.quantity} × ${line.applianceName}`).join(', ');
+  const electronicsCare = {
+    lineItems: request.lineItems,
+    subtotal: request.subtotal,
+    knownSubtotal: request.knownSubtotal,
+    estimatedTotal: request.estimatedTotal,
+    hasQuotation: request.hasQuotation,
+    currency: 'INR',
+    pricesAreProvisional: true,
+    appointmentStatus: 'requested',
+    assignmentStatus: 'awaiting_team_assignment',
+    teamCategories: request.teamCategories,
+    pricingNotice: request.pricingNotice,
+    quotationMessage: request.quotationMessage,
+  };
+
+  if (supabaseConfigured) {
+    if (!req.authUser || !req.appProfile) return res.status(401).json({ success: false, message: 'Sign in with a KaamConnect customer account to request a visit.' });
+    if (req.appProfile.role !== 'customer') return res.status(403).json({ success: false, message: 'Only customer accounts can request Home Electronics Care.' });
+    const metadata = {
+      customerId: req.appProfile.id,
+      customerName: req.appProfile.full_name,
+      serviceName: 'Home Electronics Care',
+      taskName: summary,
+      electronicsCare,
+    };
+    const row = {
+      customer_id: req.appProfile.id,
+      worker_id: null,
+      service_id: 'electrician',
+      task_id: null,
+      booking_type: 'scheduled',
+      scheduled_date: request.requestedDate,
+      scheduled_slot: `${request.requestedTime} (requested, not confirmed)`,
+      locality: request.locality,
+      address_details: request.addressDetails,
+      estimated_price_min: request.estimatedTotal,
+      estimated_price_max: request.estimatedTotal,
+      final_price: null,
+      payment_method: 'quote-after-assessment',
+      status: 'pending',
+      metadata,
+    };
+    const { data, error } = await dbResult(supabase.from('bookings').insert(row)
+      .select('*, services(name), service_tasks(name), workers(*, users(*), worker_skills(*))').single());
+    if (error) return res.status(503).json({ success: false, message: 'Unable to save this Home Electronics Care request.' });
+    return res.status(201).json({ success: true, data: bookingFromDb(data) });
+  }
+
+  const customerId = String(body.customerId || '').trim();
+  const customerName = String(body.customerName || '').trim().slice(0, 100);
+  if (!customerId || !customerName) return res.status(400).json({ success: false, message: 'Customer identity is required.' });
+  const booking = {
+    id: `BK-HCC-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    customerId,
+    customerName,
+    serviceId: 'electrician',
+    serviceName: 'Home Electronics Care',
+    taskId: null,
+    taskName: summary,
+    workerId: null,
+    worker: null,
+    bookingType: 'scheduled',
+    scheduledDate: request.requestedDate,
+    scheduledSlot: `${request.requestedTime} (requested, not confirmed)`,
+    locality: request.locality,
+    addressDetails: request.addressDetails,
+    estimatedPriceMin: request.estimatedTotal,
+    estimatedPriceMax: request.estimatedTotal,
+    finalPrice: null,
+    paymentMethod: 'quote-after-assessment',
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    electronicsCare,
+  };
+  bookings.unshift(booking);
+  savePersistentState();
+  return res.status(201).json({ success: true, data: booking });
 });
 
 // 9. Bookings list

@@ -139,6 +139,27 @@ export const api = {
     return Array.isArray(json.data) ? json.data : [];
   },
 
+  getElectronicsCareCatalog: async () => {
+    const res = await fetch(`${BASE_URL}/electronics-care/catalog`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.message || `Appliance services request failed (HTTP ${res.status}).`);
+    if (!json.success || !json.data || !Array.isArray(json.data.appliances)) {
+      throw new Error('The appliance services API returned an invalid response.');
+    }
+    return json.data;
+  },
+
+  createElectronicsCareBooking: async (request, token) => {
+    const res = await fetch(`${BASE_URL}/electronics-care/bookings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(request),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) throw new Error(json.message || 'Unable to submit the appliance service request.');
+    return json.data;
+  },
+
   cancelBooking: async (bookingId, customerId, token) => {
     const res = await fetch(`${BASE_URL}/bookings/${bookingId}/cancel`, {
       method: 'PATCH',

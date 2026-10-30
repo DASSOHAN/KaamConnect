@@ -12,7 +12,7 @@ export const Header = ({
   hasActiveBooking, onOpenActiveBooking, onOpenMyJobs, onOpenWorkerDashboard,
   onOpenWorkerJobs, onOpenAdmin, onOpenMessages, unreadMessageCount = 0,
   onOpenAccount, onSignOut, isAuthenticated = false, locations = [],
-  onJoinCustomer, onJoinWorker,
+  onJoinCustomer, onJoinWorker, onOpenElectronicsCare,
 }) => {
   const [isLocationOpen, setIsLocationOpen] = useState(false);
   const [isRadiusOpen, setIsRadiusOpen] = useState(false);
@@ -34,6 +34,7 @@ export const Header = ({
     <div className={mobile ? 'grid grid-cols-2 gap-2' : 'flex flex-wrap items-center gap-2'}>
       {hasActiveBooking && <NavButton onClick={() => { closeMenu(); onOpenActiveBooking?.(); }} icon={<Activity />} highlight>Live job</NavButton>}
       {currentRole === 'customer' && <NavButton onClick={() => { closeMenu(); onOpenMyJobs?.(); }} icon={<Clock />}>My Bookings</NavButton>}
+      {currentRole === 'customer' && <NavButton onClick={() => { closeMenu(); onOpenElectronicsCare?.(); }} icon={<Monitor />}>Home Electronics Care</NavButton>}
       {currentRole === 'worker' && <>
         <NavButton onClick={() => { closeMenu(); onOpenWorkerDashboard?.(); }} icon={<Briefcase />}>Worker dashboard</NavButton>
         <NavButton onClick={() => { closeMenu(); onOpenWorkerJobs?.(); }} icon={<Users />}>Available jobs</NavButton>
@@ -63,7 +64,7 @@ export const Header = ({
       <div className="mx-auto flex max-w-7xl flex-col gap-2 px-3 py-2.5 sm:px-6 sm:py-3">
         <div className="flex min-w-0 items-center justify-between gap-2">
           <button type="button" onClick={onHome} className="flex min-w-0 shrink-0 items-center gap-2.5 rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-800 bg-slate-900 font-bold shadow-sm"><span className="text-xl tracking-tighter text-blue-400">K</span><span className="text-xl tracking-tighter text-emerald-400">C</span></span>
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center gap-0.5 rounded-xl border font-bold shadow-sm" style={{ backgroundColor: '#F2F0E9', borderColor: '#F2F0E9' }}><span className="inline-block text-xl tracking-tighter" style={{ backgroundImage: 'linear-gradient(to bottom, #FFD43B 0%, #FFD43B 50%, #242629 50%, #242629 75%, #C5CAD0 75%, #C5CAD0 100%)', color: 'transparent', backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', WebkitTextStroke: '0.5px #242629', transform: 'scale(1.12)' }}>K</span><span className="inline-block text-xl tracking-tighter" style={{ backgroundImage: 'linear-gradient(to bottom, #FFD43B 0%, #FFD43B 50%, #242629 50%, #242629 75%, #C5CAD0 75%, #C5CAD0 100%)', color: 'transparent', backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', WebkitTextStroke: '0.5px #242629', transform: 'scale(1.12)' }}>C</span></span>
             <span className="hidden min-w-0 xs:block"><span className="flex items-center gap-1.5"><span className="truncate text-base font-bold tracking-tight text-slate-900 sm:text-lg">{t.brandName}</span><span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-700">Kalyani</span></span><span className="hidden text-[10px] font-medium text-slate-500 sm:block">Nadia District Informal Labor Platform</span></span>
           </button>
 
