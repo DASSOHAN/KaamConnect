@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { INITIAL_LOCATIONS, INITIAL_SERVICES, INITIAL_WORKERS } from '../data.js';
 import { supabase, supabaseConfigured } from './client.js';
 
-if (!supabaseConfigured) throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in server/.env before seeding.');
+if (!supabaseConfigured) throw new Error('Set SUPABASE_URL and SUPABASE_SECRET_KEY in server/.env before seeding.');
 const check = (result) => { if (result.error) throw result.error; return result.data; };
 
 for (const service of INITIAL_SERVICES) {

@@ -2,9 +2,43 @@
 
 const BASE_URL = '/api';
 
+async function authorizedRequest(path, token, options = {}) {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      ...(options.body && typeof options.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
+      ...options.headers,
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.success === false) {
+    const error = new Error(json.message || `Request failed (${res.status})`);
+    error.status = res.status;
+    error.code = json.code;
+    throw error;
+  }
+  return json.data;
+}
+
 export const api = {
-  createJob: async (job) => {
-    const res = await fetch(`${BASE_URL}/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(job) });
+  getAccountProfile: (token) => authorizedRequest('/account/profile', token),
+  saveAccountProfile: (token, profile) => authorizedRequest('/account/profile', token, { method: 'POST', body: JSON.stringify(profile) }),
+  getConversations: (token) => authorizedRequest('/conversations', token),
+  createConversation: (token, relatedTo) => authorizedRequest('/conversations', token, { method: 'POST', body: JSON.stringify(relatedTo) }),
+  getConversationMessages: (token, conversationId) => authorizedRequest(`/conversations/${encodeURIComponent(conversationId)}/messages`, token),
+  sendMessage: (token, conversationId, message) => authorizedRequest(`/conversations/${encodeURIComponent(conversationId)}/messages`, token, { method: 'POST', body: JSON.stringify(message) }),
+  createQuotation: (token, conversationId, quote) => authorizedRequest(`/conversations/${encodeURIComponent(conversationId)}/quotations`, token, { method: 'POST', body: JSON.stringify(quote) }),
+  respondToQuotation: (token, quotationId, response) => authorizedRequest(`/quotations/${encodeURIComponent(quotationId)}/respond`, token, { method: 'POST', body: JSON.stringify(response) }),
+  reportMessage: (token, messageId, reason) => authorizedRequest(`/messages/${encodeURIComponent(messageId)}/report`, token, { method: 'POST', body: JSON.stringify({ reason }) }),
+  getUnreadMessageCount: (token) => authorizedRequest('/messages/unread-count', token),
+  getAdminMessageReports: (token) => authorizedRequest('/admin/message-reports', token),
+  getAdminConversation: (token, conversationId) => authorizedRequest(`/admin/conversations/${encodeURIComponent(conversationId)}`, token),
+  updateAdminMessageReport: (token, reportId, updates) => authorizedRequest(`/admin/message-reports/${encodeURIComponent(reportId)}`, token, { method: 'PATCH', body: JSON.stringify(updates) }),
+  moderateAccount: (token, userId, isSuspended) => authorizedRequest(`/admin/users/${encodeURIComponent(userId)}/suspension`, token, { method: 'PATCH', body: JSON.stringify({ isSuspended }) }),
+  moderateConversation: (token, conversationId, status, notes) => authorizedRequest(`/admin/conversations/${encodeURIComponent(conversationId)}`, token, { method: 'PATCH', body: JSON.stringify({ status, notes }) }),
+  createJob: async (job, token) => {
+    const res = await fetch(`${BASE_URL}/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(job) });
     const json = await res.json();
     if (!res.ok || !json.success) throw new Error(json.message || 'Unable to post your job');
     return json.data;
@@ -19,8 +53,13 @@ export const api = {
     return Array.isArray(json.data) ? json.data : [];
   },
 
-  getJob: async (jobId) => {
-    const res = await fetch(`${BASE_URL}/jobs/${encodeURIComponent(jobId)}`);
+  getWorkerJobsBoard: (token) => authorizedRequest('/jobs', token),
+  getJobOffers: (token, jobId) => authorizedRequest(`/jobs/${encodeURIComponent(jobId)}/offers`, token),
+  sendJobOffer: (token, jobId, offeredPrice, message) => authorizedRequest(`/jobs/${encodeURIComponent(jobId)}/offers`, token, { method: 'POST', body: JSON.stringify({ offeredPrice, message }) }),
+  acceptJobOffer: (token, jobId, offerId) => authorizedRequest(`/jobs/${encodeURIComponent(jobId)}/accept-offer`, token, { method: 'POST', body: JSON.stringify({ offerId }) }),
+
+  getJob: async (jobId, token) => {
+    const res = await fetch(`${BASE_URL}/jobs/${encodeURIComponent(jobId)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     const json = await res.json();
     if (!res.ok || !json.success) throw new Error(json.message || 'Unable to load this job');
     return json.data;
@@ -78,17 +117,17 @@ export const api = {
     return json.data;
   },
 
-  getBookings: async (customerId) => {
-    const res = await fetch(`${BASE_URL}/bookings?customerId=${encodeURIComponent(customerId || '')}`);
+  getBookings: async (customerId, token) => {
+    const res = await fetch(`${BASE_URL}/bookings?customerId=${encodeURIComponent(customerId || '')}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     if (!res.ok) throw new Error(`Bookings API returned HTTP ${res.status}`);
     const json = await res.json();
     return Array.isArray(json.data) ? json.data : [];
   },
 
-  cancelBooking: async (bookingId, customerId) => {
+  cancelBooking: async (bookingId, customerId, token) => {
     const res = await fetch(`${BASE_URL}/bookings/${bookingId}/cancel`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ customerId }),
     });
     const json = await res.json();
@@ -96,10 +135,10 @@ export const api = {
     return json.data;
   },
 
-  registerWorker: async (profile) => {
+  registerWorker: async (profile, token) => {
     const res = await fetch(`${BASE_URL}/workers/register`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(profile),
     });
     const json = await res.json();
@@ -111,18 +150,19 @@ export const api = {
     return json.data;
   },
 
-  getWorkerJobs: async (workerId, ownerId) => {
+  getMyWorkerProfile: (token) => authorizedRequest('/workers/me', token),
+  getWorkerJobs: async (workerId, ownerId, token) => {
     const query = ownerId ? `?ownerId=${encodeURIComponent(ownerId)}` : '';
-    const res = await fetch(`${BASE_URL}/workers/${workerId}/jobs${query}`);
+    const res = await fetch(`${BASE_URL}/workers/${workerId}/jobs${query}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     const json = await res.json();
     if (!res.ok) throw new Error(json.message || 'Unable to load worker jobs');
     return Array.isArray(json.data) ? json.data : [];
   },
 
-  updateWorkerProfile: async (workerId, profile) => {
+  updateWorkerProfile: async (workerId, profile, token) => {
     const res = await fetch(`${BASE_URL}/workers/${workerId}/profile`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(profile),
     });
     const json = await res.json();
@@ -130,10 +170,10 @@ export const api = {
     return json.data;
   },
 
-  updateWorkerJobStatus: async (bookingId, workerId, ownerId, status) => {
+  updateWorkerJobStatus: async (bookingId, workerId, ownerId, status, token) => {
     const res = await fetch(`${BASE_URL}/bookings/${bookingId}/worker-status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ workerId, ownerId, status }),
     });
     const json = await res.json();
@@ -142,11 +182,11 @@ export const api = {
   },
 
   // Toggle KYC
-  toggleWorkerKyc: async (workerId, kycVerified) => {
+  toggleWorkerKyc: async (workerId, kycVerified, token) => {
     try {
       const res = await fetch(`${BASE_URL}/workers/${workerId}/kyc`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ kycVerified }),
       });
       return await res.json();
@@ -156,11 +196,11 @@ export const api = {
   },
 
   // Toggle Duty
-  toggleWorkerDuty: async (workerId, isAvailable, ownerId) => {
+  toggleWorkerDuty: async (workerId, isAvailable, ownerId, token) => {
     try {
       const res = await fetch(`${BASE_URL}/workers/${workerId}/duty`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ isAvailable, ownerId }),
       });
       return await res.json();
@@ -170,26 +210,23 @@ export const api = {
   },
 
   // Create Booking
-  createBooking: async (bookingData) => {
-    try {
-      const res = await fetch(`${BASE_URL}/bookings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bookingData),
-      });
-      const json = await res.json();
-      return json.data;
-    } catch (e) {
-      return null;
-    }
+  createBooking: async (bookingData, token) => {
+    const res = await fetch(`${BASE_URL}/bookings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(bookingData),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) throw new Error(json.message || 'Unable to create booking');
+    return json.data;
   },
 
   // Update Booking Status
-  updateBookingStatus: async (bookingId, status) => {
+  updateBookingStatus: async (bookingId, status, token) => {
     try {
       const res = await fetch(`${BASE_URL}/bookings/${bookingId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ status }),
       });
       const json = await res.json();
@@ -200,11 +237,11 @@ export const api = {
   },
 
   // Review Booking
-  reviewBooking: async (bookingId, rating, tipAmount, reviewComment) => {
+  reviewBooking: async (bookingId, rating, tipAmount, reviewComment, token) => {
     try {
       const res = await fetch(`${BASE_URL}/bookings/${bookingId}/review`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ rating, tipAmount, reviewComment }),
       });
       const json = await res.json();

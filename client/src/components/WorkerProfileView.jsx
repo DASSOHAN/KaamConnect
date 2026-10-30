@@ -1,7 +1,7 @@
 import React from 'react';
-import { ArrowLeft, MapPin, Phone, ShieldCheck, Star } from 'lucide-react';
+import { ArrowLeft, MapPin, ShieldCheck, Star } from 'lucide-react';
 
-export const WorkerProfileView = ({ worker, isLoading, loadError, onRetry, onBack, onBook, onContact }) => {
+export const WorkerProfileView = ({ worker, isLoading, loadError, onRetry, onBack, onBook }) => {
   if (isLoading && !worker) return <section className="mx-auto max-w-3xl py-16 text-center text-sm text-slate-600" role="status">Loading worker...</section>;
   if (loadError && !worker) return <section className="mx-auto max-w-3xl py-16 text-center"><p className="text-sm text-rose-700">Unable to load this worker. Please try again.</p><button type="button" onClick={onRetry} className="mt-3 rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white">Try again</button></section>;
   if (!worker) return <section className="mx-auto max-w-3xl py-16 text-center"><p className="font-bold text-slate-900">Worker not found</p><button type="button" onClick={onBack} className="mt-3 text-sm font-semibold text-blue-700">Back to workers</button></section>;
@@ -19,7 +19,7 @@ export const WorkerProfileView = ({ worker, isLoading, loadError, onRetry, onBac
       </div>
       {worker.bio && <p className="mt-5 text-sm leading-6 text-slate-700">{worker.bio}</p>}
       {Array.isArray(worker.skills) && worker.skills.length > 0 && <div className="mt-5"><h2 className="text-xs font-bold uppercase tracking-wide text-slate-500">Skills</h2><div className="mt-2 flex flex-wrap gap-2">{worker.skills.map((skill) => <span key={skill} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">{skill}</span>)}</div></div>}
-      <div className="mt-6 flex flex-wrap gap-2"><button type="button" onClick={() => onBook(worker)} className="rounded-xl bg-blue-700 px-4 py-2.5 text-xs font-bold text-white">Book this worker</button>{worker.phone && <button type="button" onClick={() => onContact('call', worker)} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-700"><Phone className="h-3.5 w-3.5" /> Contact</button>}</div>
+      <div className="mt-6 flex flex-wrap gap-2"><button type="button" onClick={() => onBook(worker)} className="rounded-xl bg-blue-700 px-4 py-2.5 text-xs font-bold text-white">Book this worker</button></div>
     </article>
   </section>;
 };

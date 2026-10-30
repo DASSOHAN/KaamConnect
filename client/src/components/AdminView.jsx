@@ -14,7 +14,8 @@ export const AdminView = ({
   showToast,
   workers = [],
   analytics = null,
-  onToggleWorkerKyc
+  onToggleWorkerKyc,
+  onOpenMessageModeration
 }) => {
   const t = TRANSLATIONS[language] || TRANSLATIONS.en;
   const [tradeFilter, setTradeFilter] = useState('all');
@@ -53,6 +54,7 @@ export const AdminView = ({
 
   return (
     <div className="py-6 sm:py-8 space-y-8 max-w-6xl mx-auto">
+      {onOpenMessageModeration && <button type="button" onClick={onOpenMessageModeration} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">Message moderation</button>}
       {/* Top Banner */}
       <div className="bg-slate-900 text-white rounded-3xl p-6 sm:p-8 shadow-card border border-slate-800">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

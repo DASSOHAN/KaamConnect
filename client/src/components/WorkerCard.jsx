@@ -3,8 +3,6 @@ import {
   Star, 
   ShieldCheck, 
   MapPin, 
-  Phone, 
-  MessageSquare, 
   Languages,
   ChevronDown,
   ChevronUp
@@ -156,22 +154,6 @@ export const WorkerCard = ({
         </div>
 
         <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => onContact('call', worker)}
-            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition"
-            title={`Direct call to ${worker.name}`}
-          >
-            <Phone className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => onContact('whatsapp', worker)}
-            className="p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition"
-            title={`WhatsApp message to ${worker.name}`}
-          >
-            <MessageSquare className="w-4 h-4" />
-          </button>
-
           <button
             onClick={() => onBook(worker)}
             className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-sm transition active:scale-95"

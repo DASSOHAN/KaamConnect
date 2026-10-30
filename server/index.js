@@ -9,6 +9,7 @@ import {
   INITIAL_ANALYTICS 
 } from './data.js';
 import { dbResult, supabase, supabaseConfigured } from './database/client.js';
+import { checkSupabaseConnection, supabaseUrl } from './supabase.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -87,6 +88,26 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
+app.get('/api/health/supabase', async (req, res) => {
+  const result = await checkSupabaseConnection();
+  if (!result.connected) {
+    return res.status(503).json({
+      success: false,
+      connected: false,
+      database: 'supabase',
+      ...result,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return res.json({
+    success: true,
+    connected: true,
+    database: 'supabase',
+    ...result,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // 2. Locations
 app.get('/api/locations', async (req, res) => {
   if (supabaseConfigured) {
@@ -115,7 +136,7 @@ const workerFromDb = (row) => ({
   ...(row.metadata || {}), id: row.id, legacyId: row.legacy_id, ownerId: row.metadata?.ownerId,
   name: row.users?.full_name || row.metadata?.name || 'KaamConnect worker',
   nameBn: row.metadata?.nameBn || row.users?.full_name, nameHi: row.metadata?.nameHi || row.users?.full_name,
-  phone: row.users?.phone || '', email: row.users?.email || '', tradeId: row.trade_id,
+  phone: '', email: '', tradeId: row.trade_id,
   bio: row.bio || '', avatar: row.profile_photo_url || '', locality: row.locality || '',
   isAvailable: row.is_available, availability: row.is_available, kycStatus: row.kyc_status,
   kycVerified: row.kyc_status === 'verified', aadhaarVerified: row.aadhaar_verified,
@@ -128,12 +149,10 @@ const findWorkerDb = async (id) => {
   const column = /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(id) ? 'id' : 'legacy_id';
   return dbResult(supabase.from('workers').select('*, users(*), worker_skills(*)').eq(column, id).maybeSingle());
 };
-const resolveCustomer = async (id = 'demo-customer-1', name = 'Demo Customer') => {
-  const phone = `${String(id).replace(/[^a-z0-9-]/gi, '-') }@kaamconnect.invalid`;
-  return dbResult(supabase.from('users').upsert({ full_name: name, phone, role: 'customer', locality: 'Kalyani' }, { onConflict: 'phone' }).select('*').single());
-};
-const bookingFromDb = (row) => ({
-  ...(row.metadata || {}), id: row.id, customerId: row.metadata?.customerId || row.customer_id,
+const bookingFromDb = (row) => {
+  const { customerPhone: _privatePhone, ...safeMetadata } = row.metadata || {};
+  return ({
+  ...safeMetadata, id: row.id, customerId: row.metadata?.customerId || row.customer_id,
   serviceId: row.service_id, serviceName: row.services?.name || row.metadata?.serviceName || row.service_id,
   taskId: row.task_id, taskName: row.service_tasks?.name || row.metadata?.taskName || '',
   workerId: row.worker_id, worker: row.workers ? workerFromDb(row.workers) : null,
@@ -141,6 +160,121 @@ const bookingFromDb = (row) => ({
   locality: row.locality, addressDetails: row.address_details, estimatedPriceMin: Number(row.estimated_price_min || 0),
   estimatedPriceMax: Number(row.estimated_price_max || 0), finalPrice: Number(row.final_price || 0),
   paymentMethod: row.payment_method, status: row.status, otp: row.otp, createdAt: row.created_at,
+  });
+};
+
+const optionalAuth = async (req, res, next) => {
+  const authorization = String(req.headers.authorization || '');
+  const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!token) return next();
+  if (!supabaseConfigured) return res.status(503).json({ success: false, message: 'Authentication is unavailable until Supabase is configured.' });
+  const { data, error } = await dbResult(supabase.auth.getUser(token));
+  if (error || !data?.user) return res.status(401).json({ success: false, message: 'Your session is invalid or expired. Please sign in again.' });
+  req.authUser = data.user;
+  const profile = await dbResult(supabase.from('users').select('*').eq('auth_user_id', data.user.id).maybeSingle());
+  if (profile.error) return res.status(503).json({ success: false, message: 'Unable to load your KaamConnect account.' });
+  if (profile.data?.is_suspended) return res.status(403).json({ success: false, message: 'This account is suspended. Contact KaamConnect support.' });
+  req.appProfile = profile.data || null;
+  next();
+};
+
+const requireAuth = (req, res, next) => optionalAuth(req, res, () => {
+  if (!req.authUser) return res.status(401).json({ success: false, message: 'Sign in to use private messaging.' });
+  if (!req.appProfile) return res.status(403).json({ success: false, message: 'Finish setting up your KaamConnect account first.' });
+  next();
+});
+
+const requireAdmin = (req, res, next) => requireAuth(req, res, () => {
+  if (req.appProfile.role !== 'admin') return res.status(403).json({ success: false, message: 'Administrator access is required.' });
+  next();
+});
+
+const contactSharingType = (text) => {
+  const value = String(text || '');
+  if (/\bwa\.me\/|whatsapp\.com\/(?:send|channel|invite)|\b(?:whats\s*app|whatsapp)\b.{0,60}\b(?:me|call|message|number|contact|reach|text|ping|invite|join|group)\b|\b(?:message|call|contact|text)\s+(?:me|us)\s+(?:on|at)\s+(?:whats\s*app|whatsapp)\b/i.test(value)) return 'whatsapp';
+  if (/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(value)) return 'email';
+  if (/(?<!\d)(?:\+\s*91[\s().-]*)?[6-9](?:[\s().-]*\d){9}(?!\d)/.test(value)) return 'phone';
+  return null;
+};
+
+const getConversationAccess = async (conversationId, userId) => {
+  const membership = await dbResult(supabase.from('conversation_participants').select('id,last_read_at').eq('conversation_id', conversationId).eq('user_id', userId).maybeSingle());
+  if (membership.error || !membership.data) return { error: membership.error, membership: null, conversation: null };
+  const conversation = await dbResult(supabase.from('conversations').select('*').eq('id', conversationId).maybeSingle());
+  return { error: conversation.error, membership: membership.data, conversation: conversation.data };
+};
+
+const createConversationForBooking = async (booking) => {
+  if (!booking?.customer_id || !booking?.worker_id) return null;
+  const [worker, customer] = await Promise.all([
+    dbResult(supabase.from('workers').select('user_id, users!workers_user_id_fkey(auth_user_id)').eq('id', booking.worker_id).maybeSingle()),
+    dbResult(supabase.from('users').select('auth_user_id').eq('id', booking.customer_id).maybeSingle()),
+  ]);
+  if (worker.error || customer.error || !worker.data?.user_id || !worker.data.users?.auth_user_id || !customer.data?.auth_user_id) return null;
+  return ensureConversation({ customerId: booking.customer_id, workerId: booking.worker_id, workerUserId: worker.data.user_id, jobId: booking.job_id, bookingId: booking.id });
+};
+
+const ensureConversation = async ({ customerId, workerId, workerUserId, jobId = null, bookingId = null }) => {
+  let found = bookingId
+    ? await dbResult(supabase.from('conversations').select('*').eq('booking_id', bookingId).maybeSingle())
+    : { data: null, error: null };
+  if (!found.data && jobId) found = await dbResult(supabase.from('conversations').select('*').eq('job_id', jobId).eq('worker_id', workerId).maybeSingle());
+  let conversation = found.data;
+  if (!conversation) {
+    const inserted = await dbResult(supabase.from('conversations').insert({ customer_id: customerId, worker_id: workerId, job_id: jobId, booking_id: bookingId }).select('*').single());
+    if (inserted.error) {
+      const retry = bookingId
+        ? await dbResult(supabase.from('conversations').select('*').eq('booking_id', bookingId).maybeSingle())
+        : await dbResult(supabase.from('conversations').select('*').eq('job_id', jobId).eq('worker_id', workerId).maybeSingle());
+      if (retry.error || !retry.data) return null;
+      conversation = retry.data;
+    } else conversation = inserted.data;
+  } else if (bookingId && !conversation.booking_id) {
+    const updated = await dbResult(supabase.from('conversations').update({ booking_id: bookingId, updated_at: new Date().toISOString() }).eq('id', conversation.id).select('*').single());
+    if (!updated.error) conversation = updated.data;
+  }
+  if (conversation.customer_id !== customerId || conversation.worker_id !== workerId) return null;
+  const members = [customerId, workerUserId].filter(Boolean);
+  if (members.length !== 2) return null;
+  const participantRows = await dbResult(supabase.from('users').select('id,auth_user_id').in('id', members));
+  if (participantRows.error || participantRows.data?.length !== 2 || participantRows.data.some((participant) => !participant.auth_user_id)) return null;
+  const savedMembers = await dbResult(supabase.from('conversation_participants').upsert(members.map((user_id) => ({ conversation_id: conversation.id, user_id })), { onConflict: 'conversation_id,user_id', ignoreDuplicates: true }));
+  if (savedMembers.error) return null;
+  return conversation;
+};
+
+app.get('/api/account/profile', optionalAuth, async (req, res) => {
+  if (!req.authUser) return res.status(401).json({ success: false, message: 'Sign in to view your KaamConnect account.' });
+  if (!req.appProfile) return res.status(404).json({ success: false, message: 'KaamConnect account profile is not set up yet.' });
+  let workerProfileComplete = false;
+  if (req.appProfile.role === 'worker') {
+    const worker = await dbResult(supabase.from('workers').select('id').eq('user_id', req.appProfile.id).maybeSingle());
+    if (worker.error) return res.status(503).json({ success: false, message: 'Unable to check your worker profile.' });
+    workerProfileComplete = Boolean(worker.data);
+  }
+  const { id, full_name, role, locality, phone, is_suspended } = req.appProfile;
+  res.json({ success: true, data: { id, full_name, role, locality, phone, is_suspended, worker_profile_complete: workerProfileComplete } });
+});
+
+app.post('/api/account/profile', optionalAuth, async (req, res) => {
+  if (!req.authUser) return res.status(401).json({ success: false, message: 'Sign in to set up your KaamConnect account.' });
+  const fullName = String(req.body?.fullName || req.authUser.user_metadata?.full_name || '').trim();
+  const role = String(req.body?.role || req.authUser.user_metadata?.role || 'customer');
+  const phone = normalizeMobile(req.body?.phone || req.authUser.user_metadata?.phone || req.appProfile?.phone || '');
+  if (fullName.length < 2 || fullName.length > 100) return res.status(400).json({ success: false, message: 'Enter a name between 2 and 100 characters.' });
+  if (!isValidMobile(phone)) return res.status(400).json({ success: false, message: 'Enter a valid 10-digit Indian mobile number.' });
+  if (!['customer', 'worker'].includes(role)) return res.status(400).json({ success: false, message: 'Choose customer or worker account type.' });
+  const existing = req.appProfile;
+  if (existing && existing.role !== role) return res.status(409).json({ success: false, message: 'Account roles cannot be changed after registration.' });
+  const values = {
+    id: existing?.id || req.authUser.id, auth_user_id: req.authUser.id,
+    full_name: fullName, phone, email: req.authUser.email || null,
+    role: existing?.role || role,
+    updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await dbResult(supabase.from('users').upsert(values, { onConflict: 'auth_user_id' }).select('id,full_name,role,locality,phone,is_suspended').single());
+  if (error) return res.status(503).json({ success: false, message: 'Unable to save your KaamConnect profile.' });
+  res.json({ success: true, data });
 });
 
 // 4. Workers list with filters
@@ -190,9 +324,8 @@ app.get('/api/workers', async (req, res) => {
   res.json({ success: true, count: results.length, data: results });
 });
 
-// 5. Register a new worker profile. Identity is demo-scoped because the app
-// does not currently have authentication or account sessions.
-app.post('/api/workers/register', async (req, res) => {
+// 5. Register a worker profile linked to the authenticated account.
+app.post('/api/workers/register', optionalAuth, async (req, res) => {
   const {
     ownerId,
     name,
@@ -238,13 +371,23 @@ app.post('/api/workers/register', async (req, res) => {
   }
 
   if (supabaseConfigured) {
+    if (!req.authUser) return res.status(401).json({ success: false, message: 'Sign in to create a worker profile.' });
+    if (!req.appProfile) return res.status(403).json({ success: false, message: 'Set up your KaamConnect worker account before creating a profile.' });
+    if (req.appProfile && req.appProfile.role !== 'worker') return res.status(403).json({ success: false, message: 'Choose a worker account to register a worker profile.' });
     const tradeId = cleanTradeId === 'ac-repair' ? 'electrician' : cleanTradeId === 'maintenance' ? 'mason' : cleanTradeId;
     const service = await dbResult(supabase.from('services').select('id').eq('id', tradeId).eq('active', true).maybeSingle());
     if (service.error || !service.data) return res.status(400).json({ success: false, message: 'Choose an available profession.' });
-    const { data: user, error: userError } = await dbResult(supabase.from('users').insert({ full_name: cleanName, phone: normalizeMobile(phone), email: String(email || '').trim() || null, role: 'worker', language: 'bn', locality: cleanLocality }).select('*').single());
+    const userResult = req.appProfile
+      ? await dbResult(supabase.from('users').update({ full_name: req.appProfile.full_name, phone: req.appProfile.phone, email: req.authUser.email || null, locality: cleanLocality, updated_at: new Date().toISOString() }).eq('id', req.appProfile.id).select('*').single())
+      : { data: null, error: new Error('Worker accounts must be created through Supabase Auth first.') };
+    const { data: user, error: userError } = userResult;
     if (userError) return res.status(userError.code === '23505' ? 409 : 503).json({ success: false, message: userError.code === '23505' ? 'A worker profile already uses this mobile number.' : 'Unable to create worker account.' });
-    const { data: row, error } = await dbResult(supabase.from('workers').insert({ user_id: user.id, trade_id: tradeId, bio: String(bio || '').trim().slice(0, 500), profile_photo_url: String(avatar || ''), locality: cleanLocality, is_available: availability !== false, experience_years: years, half_day_rate: halfRate, daily_rate: fullRate, metadata: { ownerId: String(ownerId || `demo-owner-${user.id}`), tradeTitle: cleanTradeTitle, workingHours: String(workingHours || '09:00 AM - 07:00 PM'), isDemo: true } }).select('*, users(*)').single());
+    const profilePhoto = String(avatar || '').trim();
+    const allowedPhotoPrefix = `${supabaseUrl}/storage/v1/object/public/worker-avatars/${req.appProfile.id}/`;
+    if (profilePhoto && !profilePhoto.startsWith(allowedPhotoPrefix)) return res.status(400).json({ success: false, message: 'Upload your profile photo using the KaamConnect photo control.' });
+    const { data: row, error } = await dbResult(supabase.from('workers').upsert({ user_id: user.id, trade_id: tradeId, bio: String(bio || '').trim().slice(0, 500), profile_photo_url: profilePhoto, locality: cleanLocality, is_available: availability !== false, experience_years: years, half_day_rate: halfRate, daily_rate: fullRate, metadata: { ownerId: String(req.appProfile.id), tradeTitle: cleanTradeTitle, workingHours: String(workingHours || '09:00 AM - 07:00 PM'), isDemo: false } }, { onConflict: 'user_id' }).select('*, users(*)').single());
     if (error) return res.status(503).json({ success: false, message: 'Unable to save worker profile.' });
+    await dbResult(supabase.from('worker_skills').delete().eq('worker_id', row.id));
     const skillRows = cleanSkills.map((skill) => ({ worker_id: row.id, skill_name: skill }));
     const skillsResult = skillRows.length ? await dbResult(supabase.from('worker_skills').insert(skillRows)) : { error: null };
     if (skillsResult.error) return res.status(503).json({ success: false, message: 'Worker profile saved, but skills could not be saved.' });
@@ -297,6 +440,14 @@ app.post('/api/workers/register', async (req, res) => {
   res.status(201).json({ success: true, message: 'Worker profile registered for discovery.', data: profile });
 });
 
+app.get('/api/workers/me', requireAuth, async (req, res) => {
+  if (req.appProfile.role !== 'worker') return res.status(403).json({ success: false, message: 'A worker account is required.' });
+  const result = await dbResult(supabase.from('workers').select('*, users(*), worker_skills(*)').eq('user_id', req.appProfile.id).maybeSingle());
+  if (result.error) return res.status(503).json({ success: false, message: 'Unable to load your worker profile.' });
+  if (!result.data) return res.status(404).json({ success: false, message: 'Complete your worker profile first.' });
+  res.json({ success: true, data: workerFromDb(result.data) });
+});
+
 // 6. Worker single details
 app.get('/api/workers/:id', async (req, res) => {
   if (supabaseConfigured) {
@@ -312,18 +463,17 @@ app.get('/api/workers/:id', async (req, res) => {
   res.json({ success: true, data: worker });
 });
 
-app.patch('/api/workers/:id/profile', async (req, res) => {
+app.patch('/api/workers/:id/profile', optionalAuth, async (req, res) => {
   if (supabaseConfigured) {
+    if (!req.authUser || req.appProfile?.role !== 'worker') return res.status(403).json({ success: false, message: 'A signed-in worker account is required.' });
     const found = await findWorkerDb(req.params.id);
     if (found.error || !found.data) return res.status(found.error ? 503 : 404).json({ success: false, message: found.error ? 'Unable to load worker.' : 'Worker not found' });
-    if (found.data.metadata?.ownerId && String(req.body?.ownerId || '') !== String(found.data.metadata.ownerId)) return res.status(403).json({ success: false, message: 'You can only edit your own worker profile.' });
+    if (found.data.user_id !== req.appProfile.id) return res.status(403).json({ success: false, message: 'You can only edit your own worker profile.' });
     const body = req.body || {};
     if (body.phone !== undefined && !isValidMobile(body.phone)) return res.status(400).json({ success: false, message: 'Enter a valid 10-digit Indian mobile number.' });
     const skills = body.skills === undefined ? null : (Array.isArray(body.skills) ? body.skills : String(body.skills).split(',')).map((item) => String(item).trim()).filter(Boolean);
     const userUpdate = {};
     if (body.name !== undefined) userUpdate.full_name = String(body.name).trim();
-    if (body.phone !== undefined) userUpdate.phone = normalizeMobile(body.phone);
-    if (body.email !== undefined) userUpdate.email = String(body.email).trim() || null;
     if (body.locality !== undefined) userUpdate.locality = String(body.locality).trim();
     if (Object.keys(userUpdate).length) {
       const userResult = await dbResult(supabase.from('users').update({ ...userUpdate, updated_at: new Date().toISOString() }).eq('id', found.data.user_id));
@@ -386,11 +536,12 @@ app.patch('/api/workers/:id/profile', async (req, res) => {
   res.json({ success: true, data: workers[workerIndex] });
 });
 
-app.get('/api/workers/:id/jobs', async (req, res) => {
+app.get('/api/workers/:id/jobs', optionalAuth, async (req, res) => {
   if (supabaseConfigured) {
+    if (!req.authUser || req.appProfile?.role !== 'worker') return res.status(403).json({ success: false, message: 'A signed-in worker account is required.' });
     const worker = await findWorkerDb(req.params.id);
     if (worker.error || !worker.data) return res.status(worker.error ? 503 : 404).json({ success: false, message: 'Worker not found.' });
-    if (worker.data.metadata?.ownerId && req.query.ownerId && String(worker.data.metadata.ownerId) !== String(req.query.ownerId)) return res.status(403).json({ success: false, message: 'You can only view your own worker jobs.' });
+    if (worker.data.user_id !== req.appProfile.id) return res.status(403).json({ success: false, message: 'You can only view your own worker jobs.' });
     const { data, error } = await dbResult(supabase.from('bookings').select('*, services(name), service_tasks(name)').eq('worker_id', worker.data.id).order('created_at', { ascending: false }));
     if (error) return res.status(503).json({ success: false, message: 'Unable to load worker jobs.' });
     return res.json({ success: true, count: data.length, data: data.map(bookingFromDb) });
@@ -405,8 +556,9 @@ app.get('/api/workers/:id/jobs', async (req, res) => {
 });
 
 // 6. Toggle Worker KYC (Admin Hub)
-app.patch('/api/workers/:id/kyc', async (req, res) => {
+app.patch('/api/workers/:id/kyc', optionalAuth, async (req, res) => {
   if (supabaseConfigured) {
+    if (!req.authUser || req.appProfile?.role !== 'admin') return res.status(403).json({ success: false, message: 'Administrator access is required.' });
     const found = await findWorkerDb(req.params.id);
     if (found.error || !found.data) return res.status(found.error ? 503 : 404).json({ success: false, message: found.error ? 'Unable to load worker.' : 'Worker not found' });
     const verified = Boolean(req.body.kycVerified ?? (found.data.kyc_status !== 'verified'));
@@ -436,11 +588,12 @@ app.patch('/api/workers/:id/kyc', async (req, res) => {
 });
 
 // 7. Toggle Worker Duty (Worker Cockpit)
-app.patch('/api/workers/:id/duty', async (req, res) => {
+app.patch('/api/workers/:id/duty', optionalAuth, async (req, res) => {
   if (supabaseConfigured) {
+    if (!req.authUser || req.appProfile?.role !== 'worker') return res.status(403).json({ success: false, message: 'A signed-in worker account is required.' });
     const found = await findWorkerDb(req.params.id);
     if (found.error || !found.data) return res.status(found.error ? 503 : 404).json({ success: false, message: found.error ? 'Unable to load worker.' : 'Worker not found' });
-    if (found.data.metadata?.ownerId && String(req.body?.ownerId || '') !== String(found.data.metadata.ownerId)) return res.status(403).json({ success: false, message: 'You can only change your own availability.' });
+    if (found.data.user_id !== req.appProfile.id) return res.status(403).json({ success: false, message: 'You can only change your own availability.' });
     const available = req.body.isAvailable !== undefined ? Boolean(req.body.isAvailable) : !found.data.is_available;
     const { data, error } = await dbResult(supabase.from('workers').update({ is_available: available, last_active_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', found.data.id).select('*, users(*), worker_skills(*)').single());
     if (error) return res.status(503).json({ success: false, message: 'Unable to save worker availability.' });
@@ -471,10 +624,12 @@ app.patch('/api/workers/:id/duty', async (req, res) => {
 });
 
 // 8. Update Worker Rate Card
-app.patch('/api/workers/:id/rates', async (req, res) => {
+app.patch('/api/workers/:id/rates', optionalAuth, async (req, res) => {
   if (supabaseConfigured) {
+    if (!req.authUser || req.appProfile?.role !== 'worker') return res.status(403).json({ success: false, message: 'A signed-in worker account is required.' });
     const found = await findWorkerDb(req.params.id);
     if (found.error || !found.data) return res.status(found.error ? 503 : 404).json({ success: false, message: found.error ? 'Unable to load worker.' : 'Worker not found' });
+    if (found.data.user_id !== req.appProfile.id) return res.status(403).json({ success: false, message: 'You can only edit your own service rates.' });
     const half = req.body.halfDayRate === undefined ? Number(found.data.half_day_rate) : Number(req.body.halfDayRate);
     const daily = req.body.dailyRate === undefined ? Number(found.data.daily_rate) : Number(req.body.dailyRate);
     if (![half, daily].every((value) => Number.isFinite(value) && value >= 0 && value <= 200000)) return res.status(400).json({ success: false, message: 'Enter valid non-negative rates.' });
@@ -499,14 +654,16 @@ app.patch('/api/workers/:id/rates', async (req, res) => {
 });
 
 // 9. Bookings list
-app.get('/api/bookings', async (req, res) => {
+app.get('/api/bookings', optionalAuth, async (req, res) => {
   if (supabaseConfigured) {
+    if (!req.appProfile) return res.status(401).json({ success: false, message: 'Sign in to view bookings.' });
     let query = supabase.from('bookings').select('*, services(name), service_tasks(name), workers(*, users(*), worker_skills(*))').order('created_at', { ascending: false });
-    if (req.query.customerId) {
-      const customer = await resolveCustomer(req.query.customerId);
-      if (customer.error) return res.status(503).json({ success: false, message: 'Unable to load customer bookings.' });
-      query = query.eq('customer_id', customer.data.id);
-    }
+    if (req.appProfile.role === 'customer') query = query.eq('customer_id', req.appProfile.id);
+    else if (req.appProfile.role === 'worker') {
+      const worker = await dbResult(supabase.from('workers').select('id').eq('user_id', req.appProfile.id).maybeSingle());
+      if (worker.error || !worker.data) return res.status(403).json({ success: false, message: 'A registered worker profile is required.' });
+      query = query.eq('worker_id', worker.data.id);
+    } else if (req.appProfile.role !== 'admin') return res.status(403).json({ success: false, message: 'You cannot view these bookings.' });
     const { data, error } = await dbResult(query);
     if (error) return res.status(503).json({ success: false, message: 'Unable to load bookings.' });
     return res.json({ success: true, count: data.length, data: data.map(bookingFromDb) });
@@ -517,14 +674,16 @@ app.get('/api/bookings', async (req, res) => {
 });
 
 // 10. Create new booking
-app.post('/api/bookings', async (req, res) => {
+app.post('/api/bookings', optionalAuth, async (req, res) => {
   if (supabaseConfigured) {
     const body = req.body || {};
+    if (!req.authUser || !req.appProfile) return res.status(401).json({ success: false, message: 'Sign in with a customer account to book a service.' });
+    if (req.appProfile.role !== 'customer') return res.status(403).json({ success: false, message: 'Only customer accounts can book a service.' });
     const { data: service, error: serviceError } = await dbResult(supabase.from('services').select('id,name').eq('id', body.serviceId).eq('active', true).maybeSingle());
     if (serviceError || !service) return res.status(400).json({ success: false, message: 'Choose a valid service.' });
     const { data: task, error: taskError } = await dbResult(supabase.from('service_tasks').select('id,name,base_price').eq('id', body.taskId).eq('service_id', service.id).maybeSingle());
     if (taskError || !task) return res.status(400).json({ success: false, message: 'Choose a valid service task.' });
-    const customer = await resolveCustomer(body.customerId, body.customerName);
+    const customer = { data: req.appProfile, error: null };
     if (customer.error) return res.status(503).json({ success: false, message: 'Unable to save customer account.' });
     let worker = null;
     if (body.workerId) {
@@ -545,15 +704,15 @@ app.post('/api/bookings', async (req, res) => {
       address_details: body.addressDetails || '', estimated_price_min: Number(task.base_price),
       estimated_price_max: Math.round(Number(task.base_price) * 1.3), final_price: Number(task.base_price),
       payment_method: body.paymentMethod || 'upi', status: 'en_route', otp: String(Math.floor(1000 + Math.random() * 9000)),
-      metadata: { customerId: body.customerId || 'demo-customer-1', customerName: body.customerName || customer.data.full_name, customerPhone: body.customerPhone || '' },
+      metadata: { customerId: req.appProfile?.id || body.customerId || 'demo-customer-1', customerName: req.appProfile?.full_name || body.customerName || customer.data.full_name },
     };
     const { data, error } = await dbResult(supabase.from('bookings').insert(row).select('*, services(name), service_tasks(name), workers(*, users(*), worker_skills(*))').single());
     if (error) return res.status(503).json({ success: false, message: 'Unable to create booking.' });
-    return res.status(201).json({ success: true, message: 'Booking placed & worker dispatched', data: bookingFromDb(data) });
+    const conversation = await createConversationForBooking(data);
+    return res.status(201).json({ success: true, message: 'Booking placed & worker dispatched', data: { ...bookingFromDb(data), conversationId: conversation?.id || null } });
   }
   const { 
     customerName, 
-    customerPhone, 
     serviceId, 
     taskId, 
     locality, 
@@ -583,7 +742,6 @@ app.post('/api/bookings', async (req, res) => {
     id: `BK-KLY-${Math.floor(1000 + Math.random() * 9000)}`,
     customerId: customerId || 'demo-customer-1',
     customerName: customerName || 'Valued Kalyani Resident',
-    customerPhone: customerPhone || '+91 98300 00000',
     serviceId: service.id,
     serviceName: service.name,
     taskId: task.id,
@@ -618,10 +776,13 @@ app.post('/api/bookings', async (req, res) => {
 });
 
 // 11. Update booking status
-app.patch('/api/bookings/:id/status', async (req, res) => {
+app.patch('/api/bookings/:id/status', optionalAuth, async (req, res) => {
   if (supabaseConfigured) {
+    if (!req.authUser || req.appProfile?.role !== 'worker') return res.status(403).json({ success: false, message: 'Only the assigned worker can update booking status.' });
     if (!isValidStatus(req.body?.status)) return res.status(400).json({ success: false, message: 'Unsupported booking status.' });
-    const current = await dbResult(supabase.from('bookings').select('status').eq('id', req.params.id).maybeSingle());
+    const worker = await dbResult(supabase.from('workers').select('id').eq('user_id', req.appProfile.id).maybeSingle());
+    if (worker.error || !worker.data) return res.status(403).json({ success: false, message: 'A worker profile is required.' });
+    const current = await dbResult(supabase.from('bookings').select('status').eq('id', req.params.id).eq('worker_id', worker.data.id).maybeSingle());
     if (current.error || !current.data) return res.status(current.error ? 503 : 404).json({ success: false, message: current.error ? 'Unable to load booking.' : 'Booking not found.' });
     if (current.data.status !== req.body.status && !statusTransitions[current.data.status]?.includes(req.body.status)) return res.status(409).json({ success: false, message: `Cannot move booking from ${current.data.status} to ${req.body.status}.` });
     const { data, error } = await dbResult(supabase.from('bookings').update({ status: req.body.status, updated_at: new Date().toISOString(), completed_at: req.body.status === 'completed' ? new Date().toISOString() : null }).eq('id', req.params.id).select('*, services(name), service_tasks(name), workers(*, users(*), worker_skills(*))').single());
@@ -647,12 +808,12 @@ app.patch('/api/bookings/:id/status', async (req, res) => {
   res.json({ success: true, data: bookings[bookingIndex] });
 });
 
-app.patch('/api/bookings/:id/cancel', async (req, res) => {
+app.patch('/api/bookings/:id/cancel', optionalAuth, async (req, res) => {
   if (supabaseConfigured) {
+    if (!req.authUser || req.appProfile?.role !== 'customer') return res.status(403).json({ success: false, message: 'Only the booking customer can cancel this job.' });
     const current = await dbResult(supabase.from('bookings').select('*, services(name), service_tasks(name), workers(*, users(*), worker_skills(*))').eq('id', req.params.id).maybeSingle());
     if (current.error || !current.data) return res.status(current.error ? 503 : 404).json({ success: false, message: current.error ? 'Unable to load booking.' : 'Booking not found.' });
-    const customer = await resolveCustomer(req.body?.customerId);
-    if (customer.error || customer.data.id !== current.data.customer_id) return res.status(403).json({ success: false, message: 'Only the booking customer can cancel this job.' });
+    if (req.appProfile.id !== current.data.customer_id) return res.status(403).json({ success: false, message: 'Only the booking customer can cancel this job.' });
     if (!['pending', 'confirmed', 'en_route'].includes(current.data.status)) return res.status(409).json({ success: false, message: 'This job can no longer be cancelled.' });
     const { data, error } = await dbResult(supabase.from('bookings').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*, services(name), service_tasks(name), workers(*, users(*), worker_skills(*))').single());
     if (error) return res.status(503).json({ success: false, message: 'Unable to cancel booking.' });
@@ -672,11 +833,12 @@ app.patch('/api/bookings/:id/cancel', async (req, res) => {
   res.json({ success: true, data: booking });
 });
 
-app.patch('/api/bookings/:id/worker-status', async (req, res) => {
+app.patch('/api/bookings/:id/worker-status', optionalAuth, async (req, res) => {
   if (supabaseConfigured) {
+    if (!req.authUser || req.appProfile?.role !== 'worker') return res.status(403).json({ success: false, message: 'Only the assigned worker can update this job.' });
     const current = await dbResult(supabase.from('bookings').select('*, workers(*)').eq('id', req.params.id).maybeSingle());
     if (current.error || !current.data) return res.status(current.error ? 503 : 404).json({ success: false, message: current.error ? 'Unable to load booking.' : 'Booking not found.' });
-    if (String(req.body?.workerId || '') !== String(current.data.worker_id) || (current.data.workers?.metadata?.ownerId && String(req.body?.ownerId || '') !== String(current.data.workers.metadata.ownerId))) return res.status(403).json({ success: false, message: 'Only the assigned worker can update this job.' });
+    if (current.data.workers?.user_id !== req.appProfile.id) return res.status(403).json({ success: false, message: 'Only the assigned worker can update this job.' });
     const status = req.body?.status;
     if (!isValidStatus(status) || !statusTransitions[current.data.status]?.includes(status)) return res.status(409).json({ success: false, message: `Cannot move booking from ${current.data.status} to ${status}.` });
     const { data, error } = await dbResult(supabase.from('bookings').update({ status, updated_at: new Date().toISOString(), completed_at: status === 'completed' ? new Date().toISOString() : null }).eq('id', req.params.id).select('*, services(name), service_tasks(name), workers(*, users(*), worker_skills(*))').single());
@@ -700,14 +862,14 @@ app.patch('/api/bookings/:id/worker-status', async (req, res) => {
 });
 
 // 12. Review and tip booking
-app.post('/api/bookings/:id/review', async (req, res) => {
+app.post('/api/bookings/:id/review', optionalAuth, async (req, res) => {
   if (supabaseConfigured) {
+    if (!req.authUser || req.appProfile?.role !== 'customer') return res.status(403).json({ success: false, message: 'Only a signed-in customer can leave a review.' });
     const rating = Number(req.body?.rating);
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5.' });
     const booking = await dbResult(supabase.from('bookings').select('*').eq('id', req.params.id).maybeSingle());
     if (booking.error || !booking.data) return res.status(booking.error ? 503 : 404).json({ success: false, message: 'Booking not found.' });
-    const customer = await resolveCustomer(req.body?.customerId || booking.data.metadata?.customerId);
-    if (customer.error || customer.data.id !== booking.data.customer_id) return res.status(403).json({ success: false, message: 'Only the booking customer can leave a review.' });
+    if (req.appProfile.id !== booking.data.customer_id) return res.status(403).json({ success: false, message: 'Only the booking customer can leave a review.' });
     if (!booking.data.worker_id) return res.status(409).json({ success: false, message: 'This booking has no assigned worker.' });
     const { data: review, error } = await dbResult(supabase.from('reviews').insert({ booking_id: booking.data.id, customer_id: booking.data.customer_id, worker_id: booking.data.worker_id, rating, review_text: String(req.body?.reviewComment || '').slice(0, 2000) }).select('*').single());
     if (error) return res.status(error.code === '23505' ? 409 : 503).json({ success: false, message: error.code === '23505' ? 'This booking already has a review.' : 'Unable to save review.' });
@@ -778,19 +940,19 @@ app.post('/api/jobs/incoming/accept', (req, res) => {
 });
 
 // Customer-posted jobs and worker offers (Supabase-backed when configured).
-app.post('/api/jobs', async (req, res) => {
+app.post('/api/jobs', requireAuth, async (req, res) => {
   if (!supabaseConfigured) return res.status(503).json({ success: false, message: 'Job posting requires Supabase. Configure the server environment first.' });
+  if (req.appProfile.role !== 'customer') return res.status(403).json({ success: false, message: 'Only customer accounts can post jobs.' });
   const body = req.body || {};
   const title = String(body.title || '').trim();
   const serviceId = String(body.serviceId || '').trim();
   const locality = String(body.locality || '').trim();
   if (title.length < 3 || !serviceId || locality.length < 2) return res.status(400).json({ success: false, message: 'Enter a job title, service and location.' });
+  if (contactSharingType(`${title}\n${body.description || ''}\n${body.addressDetails || ''}`)) return res.status(422).json({ success: false, code: 'CONTACT_DETAILS_BLOCKED', message: 'To protect your privacy and keep your booking secure, please communicate through KaamConnect.' });
   const service = await dbResult(supabase.from('services').select('id').eq('id', serviceId).eq('active', true).maybeSingle());
   if (service.error || !service.data) return res.status(400).json({ success: false, message: 'Choose a valid service.' });
-  const customer = await resolveCustomer(body.customerId, body.customerName || 'Demo Customer');
-  if (customer.error) return res.status(503).json({ success: false, message: 'Unable to save customer account.' });
   const record = {
-    customer_id: customer.data.id, service_id: serviceId, task_id: body.taskId || null,
+    customer_id: req.appProfile.id, service_id: serviceId, task_id: body.taskId || null,
     title, description: String(body.description || '').slice(0, 4000), photo_url: body.photoUrl || null,
     locality, address_details: String(body.addressDetails || ''), urgency: ['normal', 'urgent', 'emergency'].includes(body.urgency) ? body.urgency : 'normal',
     preferred_date: body.preferredDate || null, preferred_time: body.preferredTime || null,
@@ -801,71 +963,102 @@ app.post('/api/jobs', async (req, res) => {
   res.status(201).json({ success: true, message: 'Job posted successfully.', data });
 });
 
-app.get('/api/jobs', async (req, res) => {
+app.get('/api/jobs', optionalAuth, async (req, res) => {
   if (!supabaseConfigured) return res.status(503).json({ success: false, message: 'Jobs require Supabase configuration.' });
   let query = supabase.from('jobs').select('*, services(name), service_tasks(name)').order('created_at', { ascending: false });
-  if (req.query.customerId) {
-    const customer = await resolveCustomer(req.query.customerId);
-    if (customer.error) return res.status(503).json({ success: false, message: 'Unable to load customer jobs.' });
-    query = query.eq('customer_id', customer.data.id);
-  }
-  if (req.query.status) query = query.eq('status', req.query.status);
+  if (req.appProfile?.role === 'customer') query = query.eq('customer_id', req.appProfile.id);
+  else if (req.appProfile?.role === 'worker') {
+    const worker = await dbResult(supabase.from('workers').select('trade_id,user_id').eq('user_id', req.appProfile.id).maybeSingle());
+    if (worker.error || !worker.data) return res.status(403).json({ success: false, message: 'A registered worker profile is required to browse jobs.' });
+    query = query.eq('service_id', worker.data.trade_id).eq('status', 'open');
+  } else query = query.eq('status', 'open');
   const { data, error } = await dbResult(query);
   if (error) return res.status(503).json({ success: false, message: 'Unable to load jobs.' });
-  res.json({ success: true, count: data.length, data });
+  const safeData = (data || []).map(({ customer_id, address_details, latitude, longitude, photo_url, ...job }) => job);
+  res.json({ success: true, count: safeData.length, data: safeData });
 });
 
-app.get('/api/jobs/:id/offers', async (req, res, next) => {
+app.get('/api/jobs/:id/offers', requireAuth, async (req, res, next) => {
   if (req.params.id === 'incoming') return next();
   if (!supabaseConfigured) return res.status(503).json({ success: false, message: 'Job offers require Supabase configuration.' });
   const { data, error } = await dbResult(supabase.from('job_offers').select('*, workers(*, users(*))').eq('job_id', req.params.id).order('created_at'));
   if (error) return res.status(503).json({ success: false, message: 'Unable to load job offers.' });
-  res.json({ success: true, data: data.map((offer) => ({ ...offer, worker: offer.workers ? workerFromDb(offer.workers) : null })) });
+  const job = await dbResult(supabase.from('jobs').select('customer_id').eq('id', req.params.id).maybeSingle());
+  const ownWorker = req.appProfile.role === 'worker' ? await dbResult(supabase.from('workers').select('id').eq('user_id', req.appProfile.id).maybeSingle()) : null;
+  if (job.error || !job.data) return res.status(job.error ? 503 : 404).json({ success: false, message: 'Job not found.' });
+  if (req.appProfile.id !== job.data.customer_id && (!ownWorker?.data || !data.some((offer) => offer.worker_id === ownWorker.data.id))) return res.status(403).json({ success: false, message: 'You cannot view these job offers.' });
+  const visibleOffers = req.appProfile.role === 'customer' ? data : data.filter((offer) => offer.worker_id === ownWorker?.data?.id);
+  res.json({ success: true, data: visibleOffers.map((offer) => ({ id: offer.id, offeredPrice: offer.offered_price, message: offer.message, status: offer.status, worker: offer.workers ? workerFromDb(offer.workers) : null })) });
 });
 
-app.get('/api/jobs/:id', async (req, res, next) => {
+app.get('/api/jobs/:id', optionalAuth, async (req, res, next) => {
   if (req.params.id === 'incoming') return next();
   if (!supabaseConfigured) return res.status(503).json({ success: false, message: 'Jobs require Supabase configuration.' });
   const { data, error } = await dbResult(supabase.from('jobs').select('*, services(name), service_tasks(name)').eq('id', req.params.id).maybeSingle());
   if (error) return res.status(503).json({ success: false, message: 'Unable to load job.' });
   if (!data) return res.status(404).json({ success: false, message: 'Job not found.' });
+  const isOwner = req.appProfile?.id === data.customer_id;
+  if (!isOwner) {
+    const { customer_id, address_details, latitude, longitude, photo_url, ...safe } = data;
+    return res.json({ success: true, data: safe });
+  }
   res.json({ success: true, data });
 });
 
-app.patch('/api/jobs/:id', async (req, res, next) => {
+app.patch('/api/jobs/:id', requireAuth, async (req, res, next) => {
   if (req.params.id === 'incoming') return next();
   if (!supabaseConfigured) return res.status(503).json({ success: false, message: 'Jobs require Supabase configuration.' });
+  if (req.appProfile.role !== 'customer') return res.status(403).json({ success: false, message: 'Only customer accounts can manage posted jobs.' });
+  const existing = await dbResult(supabase.from('jobs').select('*').eq('id', req.params.id).maybeSingle());
+  if (existing.error || !existing.data) return res.status(existing.error ? 503 : 404).json({ success: false, message: existing.error ? 'Unable to load job.' : 'Job not found.' });
+  if (existing.data.customer_id !== req.appProfile.id) return res.status(403).json({ success: false, message: 'You can only manage jobs you posted.' });
   const allowed = ['title', 'description', 'photo_url', 'locality', 'address_details', 'urgency', 'preferred_date', 'preferred_time', 'status'];
   const updates = Object.fromEntries(Object.entries(req.body || {}).filter(([key]) => allowed.includes(key)));
   if (updates.status && !['open', 'assigned', 'in_progress', 'completed', 'cancelled'].includes(updates.status)) return res.status(400).json({ success: false, message: 'Unsupported job status.' });
+  if (updates.status && updates.status !== existing.data.status) {
+    const transitions = { open: ['cancelled'], assigned: ['in_progress', 'cancelled'], in_progress: ['completed', 'cancelled'], completed: [], cancelled: [] };
+    if (!transitions[existing.data.status]?.includes(updates.status)) return res.status(409).json({ success: false, message: `Cannot move job from ${existing.data.status} to ${updates.status}.` });
+  }
+  if (updates.title !== undefined && String(updates.title).trim().length < 3) return res.status(400).json({ success: false, message: 'Enter a job title with at least 3 characters.' });
+  if (updates.urgency !== undefined && !['normal', 'urgent', 'emergency'].includes(updates.urgency)) return res.status(400).json({ success: false, message: 'Choose a valid urgency.' });
+  if (!Object.keys(updates).length) return res.status(400).json({ success: false, message: 'Provide at least one job update.' });
   updates.updated_at = new Date().toISOString();
-  const { data, error } = await dbResult(supabase.from('jobs').update(updates).eq('id', req.params.id).select('*').maybeSingle());
+  const { data, error } = await dbResult(supabase.from('jobs').update(updates).eq('id', req.params.id).eq('customer_id', req.appProfile.id).select('*').maybeSingle());
   if (error) return res.status(503).json({ success: false, message: 'Unable to update job.' });
   if (!data) return res.status(404).json({ success: false, message: 'Job not found.' });
   res.json({ success: true, data });
 });
 
-app.post('/api/jobs/:id/offers', async (req, res) => {
+app.post('/api/jobs/:id/offers', requireAuth, async (req, res) => {
   if (!supabaseConfigured) return res.status(503).json({ success: false, message: 'Job offers require Supabase configuration.' });
+  if (req.appProfile.role !== 'worker') return res.status(403).json({ success: false, message: 'Only worker accounts can respond to jobs.' });
   const amount = Number(req.body?.offeredPrice);
   if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ success: false, message: 'Enter a valid offer price.' });
-  const job = await dbResult(supabase.from('jobs').select('id,status').eq('id', req.params.id).maybeSingle());
+  const job = await dbResult(supabase.from('jobs').select('id,status,customer_id,service_id,locality').eq('id', req.params.id).maybeSingle());
   if (job.error || !job.data) return res.status(job.error ? 503 : 404).json({ success: false, message: job.error ? 'Unable to load job.' : 'Job not found.' });
   if (job.data.status !== 'open') return res.status(409).json({ success: false, message: 'This job is no longer accepting offers.' });
-  const worker = await findWorkerDb(String(req.body?.workerId || ''));
+  const worker = await dbResult(supabase.from('workers').select('*, users(*)').eq('user_id', req.appProfile.id).maybeSingle());
   if (worker.error || !worker.data) return res.status(400).json({ success: false, message: 'Choose a valid worker.' });
-  const { data, error } = await dbResult(supabase.from('job_offers').upsert({ job_id: job.data.id, worker_id: worker.data.id, offered_price: amount, message: String(req.body?.message || '').slice(0, 1000), status: 'pending' }, { onConflict: 'job_id,worker_id' }).select('*').single());
+  if (worker.data.trade_id !== job.data.service_id) return res.status(403).json({ success: false, message: 'This job does not match your registered trade.' });
+  const note = String(req.body?.message || '').trim().slice(0, 1000);
+  const detection = contactSharingType(note);
+  if (detection) {
+    const conversation = await ensureConversation({ customerId: job.data.customer_id, workerId: worker.data.id, workerUserId: req.appProfile.id, jobId: job.data.id });
+    if (conversation) await dbResult(supabase.from('contact_sharing_attempts').insert({ conversation_id: conversation.id, sender_id: req.appProfile.id, detection_type: detection }));
+    return res.status(422).json({ success: false, code: 'CONTACT_DETAILS_BLOCKED', message: 'To protect your privacy and keep your booking secure, please communicate through KaamConnect.' });
+  }
+  const { data, error } = await dbResult(supabase.from('job_offers').upsert({ job_id: job.data.id, worker_id: worker.data.id, offered_price: amount, message: note, status: 'pending' }, { onConflict: 'job_id,worker_id' }).select('*').single());
   if (error) return res.status(503).json({ success: false, message: 'Unable to submit offer.' });
-  res.status(201).json({ success: true, data });
+  const conversation = await ensureConversation({ customerId: job.data.customer_id, workerId: worker.data.id, workerUserId: req.appProfile.id, jobId: job.data.id });
+  res.status(201).json({ success: true, data: { ...data, conversationId: conversation?.id || null } });
 });
 
-app.post('/api/jobs/:id/accept-offer', async (req, res) => {
+app.post('/api/jobs/:id/accept-offer', requireAuth, async (req, res) => {
   if (!supabaseConfigured) return res.status(503).json({ success: false, message: 'Job offers require Supabase configuration.' });
   const offer = await dbResult(supabase.from('job_offers').select('*, jobs(*)').eq('id', req.body?.offerId).eq('job_id', req.params.id).maybeSingle());
   if (offer.error || !offer.data) return res.status(404).json({ success: false, message: 'Offer not found.' });
   if (offer.data.jobs.status !== 'open') return res.status(409).json({ success: false, message: 'This job has already been assigned.' });
-  const customer = await resolveCustomer(req.body?.customerId);
-  if (customer.error || customer.data.id !== offer.data.jobs.customer_id) return res.status(403).json({ success: false, message: 'Only the customer who posted this job can accept an offer.' });
+  if (req.appProfile.role !== 'customer' || req.appProfile.id !== offer.data.jobs.customer_id) return res.status(403).json({ success: false, message: 'Only the customer who posted this job can accept an offer.' });
   const jobUpdate = await dbResult(supabase.from('jobs').update({ status: 'assigned', updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('status', 'open').select('*').maybeSingle());
   if (jobUpdate.error || !jobUpdate.data) return res.status(409).json({ success: false, message: 'This job has already been assigned.' });
   await dbResult(supabase.from('job_offers').update({ status: 'accepted', updated_at: new Date().toISOString() }).eq('id', offer.data.id));
@@ -877,20 +1070,21 @@ app.post('/api/jobs/:id/accept-offer', async (req, res) => {
     scheduled_slot: job.preferred_time, locality: job.locality, address_details: job.address_details,
     estimated_price_min: job.estimated_price_min, estimated_price_max: job.estimated_price_max,
     final_price: offer.data.offered_price, payment_method: 'upi', status: 'confirmed',
-    otp: String(Math.floor(1000 + Math.random() * 9000)), metadata: { customerId: req.body?.customerId || 'demo-customer-1', customerName: customer.data.full_name },
+    otp: String(Math.floor(1000 + Math.random() * 9000)), metadata: { customerId: req.appProfile.id, customerName: req.appProfile.full_name },
   }).select('*, services(name), service_tasks(name), workers(*, users(*), worker_skills(*))').single());
   if (bookingError) return res.status(503).json({ success: false, message: 'Offer was accepted, but its booking could not be created. Contact support before retrying.' });
-  res.json({ success: true, data: { job: jobUpdate.data, offer: { ...offer.data, status: 'accepted' }, booking: bookingFromDb(booking) } });
+  const conversation = await createConversationForBooking(booking);
+  res.json({ success: true, data: { job: jobUpdate.data, offer: { ...offer.data, status: 'accepted' }, booking: { ...bookingFromDb(booking), conversationId: conversation?.id || null } } });
 });
 
-app.post('/api/reviews', async (req, res) => {
+app.post('/api/reviews', requireAuth, async (req, res) => {
   if (!supabaseConfigured) return res.status(503).json({ success: false, message: 'Reviews require Supabase configuration.' });
+  if (req.appProfile.role !== 'customer') return res.status(403).json({ success: false, message: 'Only customer accounts can leave a review.' });
   const rating = Number(req.body?.rating);
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5.' });
   const booking = await dbResult(supabase.from('bookings').select('*').eq('id', req.body?.bookingId).maybeSingle());
   if (booking.error || !booking.data) return res.status(404).json({ success: false, message: 'Booking not found.' });
-  const customer = await resolveCustomer(req.body?.customerId);
-  if (customer.error || booking.data.customer_id !== customer.data.id) return res.status(403).json({ success: false, message: 'Only the customer can review this booking.' });
+  if (booking.data.customer_id !== req.appProfile.id) return res.status(403).json({ success: false, message: 'Only the booking customer can leave a review.' });
   if (booking.data.status !== 'completed') return res.status(409).json({ success: false, message: 'Complete the booking before leaving a review.' });
   const { data, error } = await dbResult(supabase.from('reviews').insert({ booking_id: booking.data.id, customer_id: booking.data.customer_id, worker_id: booking.data.worker_id, rating, review_text: String(req.body?.reviewText || '').slice(0, 2000) }).select('*').single());
   if (error) return res.status(error.code === '23505' ? 409 : 503).json({ success: false, message: error.code === '23505' ? 'This booking already has a review.' : 'Unable to save review.' });
@@ -906,22 +1100,339 @@ app.get('/api/workers/:id/reviews', async (req, res) => {
   res.json({ success: true, data });
 });
 
-app.get('/api/workers/:id/history', async (req, res) => {
+app.get('/api/workers/:id/history', requireAuth, async (req, res) => {
   if (!supabaseConfigured) return res.status(503).json({ success: false, message: 'Worker history requires Supabase configuration.' });
   const worker = await findWorkerDb(req.params.id);
   if (worker.error || !worker.data) return res.status(worker.error ? 503 : 404).json({ success: false, message: 'Worker not found.' });
+  if (req.appProfile.role !== 'admin' && (req.appProfile.role !== 'worker' || worker.data.user_id !== req.appProfile.id)) return res.status(403).json({ success: false, message: 'You can only view your own worker history.' });
   const { data, error } = await dbResult(supabase.from('bookings').select('*, services(name), service_tasks(name)').eq('worker_id', worker.data.id).order('created_at', { ascending: false }));
   if (error) return res.status(503).json({ success: false, message: 'Unable to load worker history.' });
   res.json({ success: true, data });
 });
 
-app.get('/api/workers/:id/stats', async (req, res) => {
+app.get('/api/workers/:id/stats', requireAuth, async (req, res) => {
   if (!supabaseConfigured) return res.status(503).json({ success: false, message: 'Worker statistics require Supabase configuration.' });
   const worker = await findWorkerDb(req.params.id);
   if (worker.error || !worker.data) return res.status(worker.error ? 503 : 404).json({ success: false, message: 'Worker not found.' });
+  if (req.appProfile.role !== 'admin' && (req.appProfile.role !== 'worker' || worker.data.user_id !== req.appProfile.id)) return res.status(403).json({ success: false, message: 'You can only view your own worker statistics.' });
   const { data, error } = await dbResult(supabase.from('bookings').select('status, final_price').eq('worker_id', worker.data.id));
   if (error) return res.status(503).json({ success: false, message: 'Unable to load worker statistics.' });
   res.json({ success: true, data: { completedJobs: data.filter((item) => item.status === 'completed').length, totalJobs: data.length, ratingAverage: Number(worker.data.rating_average), ratingCount: worker.data.rating_count, earnings: data.filter((item) => item.status === 'completed').reduce((sum, item) => sum + Number(item.final_price || 0), 0) } });
+});
+
+const chatWindowLimit = async (userId) => {
+  const { data, error } = await dbResult(supabase.rpc('consume_chat_rate_limit', { target_user_id: userId }));
+  return !error && data === true;
+};
+
+const conversationSummary = async (conversation, appUserId) => {
+  const isCustomer = conversation.customer_id === appUserId;
+  const [jobResult, bookingResult, workerResult, customerResult, lastResult, unreadResult] = await Promise.all([
+    conversation.job_id ? dbResult(supabase.from('jobs').select('id,title,locality,status').eq('id', conversation.job_id).maybeSingle()) : { data: null, error: null },
+    conversation.booking_id ? dbResult(supabase.from('bookings').select('id,status,final_price,locality,service_id,task_id').eq('id', conversation.booking_id).maybeSingle()) : { data: null, error: null },
+    dbResult(supabase.from('workers').select('id,user_id,profile_photo_url,kyc_status,trade_id,metadata').eq('id', conversation.worker_id).maybeSingle()),
+    dbResult(supabase.from('users').select('id,full_name').eq('id', conversation.customer_id).maybeSingle()),
+    dbResult(supabase.from('messages').select('id,message_type,message_text,created_at,sender_id').eq('conversation_id', conversation.id).order('created_at', { ascending: false }).limit(1).maybeSingle()),
+    dbResult(supabase.from('messages').select('id', { count: 'exact', head: true }).eq('conversation_id', conversation.id).eq('is_read', false).neq('sender_id', appUserId)),
+  ]);
+  if ([jobResult, bookingResult, workerResult, customerResult, lastResult, unreadResult].some((result) => result.error)) throw new Error('Unable to load conversation details.');
+  const worker = workerResult.data;
+  const workerUser = worker?.user_id ? await dbResult(supabase.from('users').select('id,full_name').eq('id', worker.user_id).maybeSingle()) : { data: null, error: null };
+  if (workerUser.error) throw new Error('Unable to load worker account.');
+  const peer = isCustomer
+    ? { name: workerUser.data?.full_name || 'KaamConnect worker', avatar: worker?.profile_photo_url || '', verified: worker?.kyc_status === 'verified', tradeId: worker?.trade_id }
+    : { name: customerResult.data?.full_name || 'KaamConnect customer', avatar: '', verified: false };
+  const last = lastResult.data;
+  return {
+    id: conversation.id, status: conversation.status, jobId: conversation.job_id, bookingId: conversation.booking_id,
+    createdAt: conversation.created_at, lastMessageAt: conversation.last_message_at,
+    peer, job: jobResult.data, booking: bookingResult.data,
+    lastMessage: last ? { type: last.message_type, text: last.message_type === 'text' ? last.message_text : last.message_type === 'image' ? 'Photo' : last.message_type === 'quote' ? 'Quotation' : 'Update', createdAt: last.created_at, sentByMe: last.sender_id === appUserId } : null,
+    unreadCount: unreadResult.count || 0,
+  };
+};
+
+const messageOutput = async (message, quotation = null) => {
+  let attachmentUrl = null;
+  if (message.attachment_url) {
+    const signed = await dbResult(supabase.storage.from('chat-attachments').createSignedUrl(message.attachment_url, 900));
+    if (!signed.error) attachmentUrl = signed.data.signedUrl;
+  }
+  return {
+    id: message.id, conversationId: message.conversation_id, senderId: message.sender_id,
+    type: message.message_type, text: message.message_text, attachmentUrl,
+    isRead: message.is_read, createdAt: message.created_at, quotation,
+  };
+};
+
+app.get('/api/messages/unread-count', requireAuth, async (req, res) => {
+  const result = await dbResult(supabase.from('messages').select('id', { count: 'exact', head: true }).neq('sender_id', req.appProfile.id).eq('is_read', false)
+    .in('conversation_id', (await dbResult(supabase.from('conversation_participants').select('conversation_id').eq('user_id', req.appProfile.id))).data?.map((row) => row.conversation_id) || []));
+  if (result.error) return res.status(503).json({ success: false, message: 'Unable to load unread messages.' });
+  res.json({ success: true, data: { count: result.count || 0 } });
+});
+
+app.get('/api/conversations', requireAuth, async (req, res) => {
+  const members = await dbResult(supabase.from('conversation_participants').select('conversation_id').eq('user_id', req.appProfile.id));
+  if (members.error) return res.status(503).json({ success: false, message: 'Unable to load conversations.' });
+  const ids = [...new Set((members.data || []).map((row) => row.conversation_id))];
+  if (!ids.length) return res.json({ success: true, data: [] });
+  const conversations = await dbResult(supabase.from('conversations').select('*').in('id', ids).order('updated_at', { ascending: false }));
+  if (conversations.error) return res.status(503).json({ success: false, message: 'Unable to load conversations.' });
+  try {
+    const data = await Promise.all(conversations.data.map((conversation) => conversationSummary(conversation, req.appProfile.id)));
+    return res.json({ success: true, data });
+  } catch (error) { return res.status(503).json({ success: false, message: error.message }); }
+});
+
+app.post('/api/conversations', requireAuth, async (req, res) => {
+  const { jobId, bookingId } = req.body || {};
+  if ((!jobId && !bookingId) || (jobId && !/^[0-9a-f-]{36}$/i.test(jobId)) || (bookingId && !/^[0-9a-f-]{36}$/i.test(bookingId))) return res.status(400).json({ success: false, message: 'Choose a valid job or booking.' });
+  let customerId; let workerId; let workerUserId; let relatedJobId = jobId || null; let relatedBookingId = bookingId || null;
+  if (bookingId) {
+    const booking = await dbResult(supabase.from('bookings').select('*').eq('id', bookingId).maybeSingle());
+    if (booking.error || !booking.data) return res.status(booking.error ? 503 : 404).json({ success: false, message: booking.error ? 'Unable to load booking.' : 'Booking not found.' });
+    const worker = await dbResult(supabase.from('workers').select('id,user_id').eq('id', booking.data.worker_id).maybeSingle());
+    if (worker.error || !worker.data) return res.status(503).json({ success: false, message: 'Unable to load assigned worker.' });
+    if (req.appProfile.id !== booking.data.customer_id && req.appProfile.id !== worker.data.user_id) return res.status(403).json({ success: false, message: 'Only the booking participants can open this conversation.' });
+    customerId = booking.data.customer_id; workerId = worker.data.id; workerUserId = worker.data.user_id;
+    relatedJobId = booking.data.job_id || null;
+  } else {
+    const job = await dbResult(supabase.from('jobs').select('*').eq('id', jobId).maybeSingle());
+    if (job.error || !job.data) return res.status(job.error ? 503 : 404).json({ success: false, message: job.error ? 'Unable to load job.' : 'Job not found.' });
+    const worker = req.appProfile.role === 'worker'
+      ? await dbResult(supabase.from('workers').select('id,user_id').eq('user_id', req.appProfile.id).maybeSingle())
+      : await findWorkerDb(String(req.body?.workerId || ''));
+    if (worker.error || !worker.data) return res.status(worker.error ? 503 : 403).json({ success: false, message: 'This account does not have a worker profile.' });
+    const actualWorkerId = worker.data.id;
+    const actualWorkerUserId = worker.data.user_id;
+    if (!actualWorkerUserId) return res.status(409).json({ success: false, message: 'This worker has not activated secure messaging yet.' });
+    if (req.appProfile.role === 'worker') {
+      const offer = await dbResult(supabase.from('job_offers').select('id').eq('job_id', jobId).eq('worker_id', actualWorkerId).maybeSingle());
+      if (offer.error || !offer.data) return res.status(403).json({ success: false, message: 'Respond to this job before opening a conversation.' });
+      customerId = job.data.customer_id;
+    } else {
+      if (job.data.customer_id !== req.appProfile.id) return res.status(403).json({ success: false, message: 'Only the job customer can open this conversation.' });
+      const offer = await dbResult(supabase.from('job_offers').select('id').eq('job_id', jobId).eq('worker_id', actualWorkerId).maybeSingle());
+      if (offer.error || !offer.data) return res.status(403).json({ success: false, message: 'A worker must respond to this job before you can message them.' });
+      customerId = req.appProfile.id;
+    }
+    workerId = actualWorkerId; workerUserId = actualWorkerUserId;
+  }
+  const conversation = await ensureConversation({ customerId, workerId, workerUserId, jobId: relatedJobId, bookingId: relatedBookingId });
+  if (!conversation) return res.status(503).json({ success: false, message: 'Unable to create this conversation. Apply the messaging database migration and try again.' });
+  const summary = await conversationSummary(conversation, req.appProfile.id);
+  res.status(201).json({ success: true, data: summary });
+});
+
+app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
+  const access = await getConversationAccess(req.params.id, req.appProfile.id);
+  if (access.error) return res.status(503).json({ success: false, message: 'Unable to check conversation access.' });
+  if (!access.membership || !access.conversation) return res.status(404).json({ success: false, message: 'Conversation not found.' });
+  if (access.conversation.status === 'blocked') return res.status(403).json({ success: false, message: 'This conversation is unavailable.' });
+  const result = await dbResult(supabase.from('messages').select('*').eq('conversation_id', req.params.id).order('created_at', { ascending: true }).limit(100));
+  if (result.error) return res.status(503).json({ success: false, message: 'Unable to load messages.' });
+  const quoteIds = result.data.filter((message) => message.quotation_id).map((message) => message.quotation_id);
+  const quoteResult = quoteIds.length ? await dbResult(supabase.from('quotations').select('*').in('id', quoteIds)) : { data: [], error: null };
+  if (quoteResult.error) return res.status(503).json({ success: false, message: 'Unable to load quotations.' });
+  const quotes = new Map((quoteResult.data || []).map((quote) => [quote.id, quote]));
+  const otherUserIds = [...new Set(result.data.filter((message) => message.sender_id !== req.appProfile.id).map((message) => message.id))];
+  const output = await Promise.all(result.data.map((message) => messageOutput(message, quotes.get(message.quotation_id) || null)));
+  const updatedAt = new Date().toISOString();
+  const marked = await dbResult(supabase.from('messages').update({ is_read: true }).eq('conversation_id', req.params.id).neq('sender_id', req.appProfile.id).eq('is_read', false));
+  await dbResult(supabase.from('conversation_participants').update({ last_read_at: updatedAt }).eq('conversation_id', req.params.id).eq('user_id', req.appProfile.id));
+  if (marked.error) return res.status(503).json({ success: false, message: 'Messages loaded but read receipts could not be updated.' });
+  res.json({ success: true, data: output });
+});
+
+app.post('/api/conversations/:id/messages', requireAuth, async (req, res) => {
+  const access = await getConversationAccess(req.params.id, req.appProfile.id);
+  if (access.error) return res.status(503).json({ success: false, message: 'Unable to check conversation access.' });
+  if (!access.membership || !access.conversation) return res.status(404).json({ success: false, message: 'Conversation not found.' });
+  if (access.conversation.status !== 'active') return res.status(409).json({ success: false, message: 'This conversation is closed.' });
+  if (!await chatWindowLimit(req.appProfile.id)) return res.status(429).json({ success: false, message: 'You have sent messages too quickly. Please wait a moment.' });
+  const type = req.body?.type || 'text';
+  let values;
+  if (type === 'text') {
+    const messageText = String(req.body?.text || '').trim();
+    if (!messageText || messageText.length > 2000) return res.status(400).json({ success: false, message: 'Message must be between 1 and 2,000 characters.' });
+    const detection = contactSharingType(messageText);
+    if (detection) {
+      await dbResult(supabase.from('contact_sharing_attempts').insert({ conversation_id: req.params.id, sender_id: req.appProfile.id, detection_type: detection }));
+      return res.status(422).json({ success: false, code: 'CONTACT_DETAILS_BLOCKED', message: 'To protect your privacy and keep your booking secure, please communicate through KaamConnect.' });
+    }
+    values = { conversation_id: req.params.id, sender_id: req.appProfile.id, message_type: 'text', message_text: messageText };
+  } else if (type === 'image') {
+    const objectPath = String(req.body?.attachmentPath || '');
+    const expectedPrefix = `${req.params.id}/${req.appProfile.id}/`;
+    if (!objectPath.startsWith(expectedPrefix) || !/\.(?:jpe?g|png|webp)$/i.test(objectPath)) return res.status(400).json({ success: false, message: 'Choose a valid chat image.' });
+    const folder = objectPath.slice(0, objectPath.lastIndexOf('/'));
+    const filename = objectPath.slice(objectPath.lastIndexOf('/') + 1);
+    const file = await dbResult(supabase.storage.from('chat-attachments').list(folder, { search: filename, limit: 10 }));
+    const stored = (file.data || []).find((item) => item.name === filename);
+    if (file.error || !stored || Number(stored.metadata?.size || 0) > 8 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(stored.metadata?.mimetype)) return res.status(400).json({ success: false, message: 'The uploaded image is missing or is not an allowed image type under 8 MB.' });
+    values = { conversation_id: req.params.id, sender_id: req.appProfile.id, message_type: 'image', attachment_url: objectPath };
+  } else return res.status(400).json({ success: false, message: 'Unsupported message type.' });
+  const { data, error } = await dbResult(supabase.from('messages').insert(values).select('*').single());
+  if (error) return res.status(503).json({ success: false, message: 'Unable to send message.' });
+  const update = await dbResult(supabase.from('conversations').update({ last_message_at: data.created_at, updated_at: data.created_at }).eq('id', req.params.id));
+  if (update.error) return res.status(503).json({ success: false, message: 'Message sent, but conversation preview did not update.' });
+  res.status(201).json({ success: true, data: await messageOutput(data) });
+});
+
+app.post('/api/conversations/:id/quotations', requireAuth, async (req, res) => {
+  const access = await getConversationAccess(req.params.id, req.appProfile.id);
+  if (access.error) return res.status(503).json({ success: false, message: 'Unable to check conversation access.' });
+  if (!access.membership || !access.conversation) return res.status(404).json({ success: false, message: 'Conversation not found.' });
+  if (access.conversation.status !== 'active' || req.appProfile.role !== 'worker') return res.status(403).json({ success: false, message: 'Only the assigned worker can send a quotation in an active conversation.' });
+  const worker = await dbResult(supabase.from('workers').select('id').eq('id', access.conversation.worker_id).eq('user_id', req.appProfile.id).maybeSingle());
+  if (worker.error || !worker.data) return res.status(403).json({ success: false, message: 'This worker account is not assigned to the conversation.' });
+  const labour = Number(req.body?.labourCost); const materials = Number(req.body?.materialCost || 0); const travel = Number(req.body?.travelCost || 0);
+  if (![labour, materials, travel].every((amount) => Number.isFinite(amount) && amount >= 0 && amount <= 1000000) || labour + materials + travel <= 0) return res.status(400).json({ success: false, message: 'Enter valid labour, material and travel costs.' });
+  const notes = String(req.body?.notes || '').trim().slice(0, 1000);
+  const detection = contactSharingType(notes);
+  if (detection) {
+    await dbResult(supabase.from('contact_sharing_attempts').insert({ conversation_id: req.params.id, sender_id: req.appProfile.id, detection_type: detection }));
+    return res.status(422).json({ success: false, code: 'CONTACT_DETAILS_BLOCKED', message: 'To protect your privacy and keep your booking secure, please communicate through KaamConnect.' });
+  }
+  if (!await chatWindowLimit(req.appProfile.id)) return res.status(429).json({ success: false, message: 'You have sent messages too quickly. Please wait a moment.' });
+  const quoteResult = await dbResult(supabase.from('quotations').insert({ conversation_id: req.params.id, booking_id: access.conversation.booking_id, sender_id: req.appProfile.id, labour_cost: labour, material_cost: materials, travel_cost: travel, notes }).select('*').single());
+  if (quoteResult.error) return res.status(503).json({ success: false, message: 'Unable to save quotation.' });
+  const message = await dbResult(supabase.from('messages').insert({ conversation_id: req.params.id, sender_id: req.appProfile.id, message_type: 'quote', quotation_id: quoteResult.data.id }).select('*').single());
+  if (message.error) return res.status(503).json({ success: false, message: 'Quotation saved, but its chat card could not be created.' });
+  await dbResult(supabase.from('conversations').update({ last_message_at: message.data.created_at, updated_at: message.data.created_at }).eq('id', req.params.id));
+  res.status(201).json({ success: true, data: await messageOutput(message.data, quoteResult.data) });
+});
+
+app.post('/api/quotations/:id/respond', requireAuth, async (req, res) => {
+  const action = String(req.body?.action || '');
+  if (!['accept', 'change', 'reject'].includes(action)) return res.status(400).json({ success: false, message: 'Choose accept, request changes or reject.' });
+  const quote = await dbResult(supabase.from('quotations').select('*').eq('id', req.params.id).maybeSingle());
+  if (quote.error || !quote.data) return res.status(404).json({ success: false, message: 'Quotation not found.' });
+  const access = await getConversationAccess(quote.data.conversation_id, req.appProfile.id);
+  if (access.error) return res.status(503).json({ success: false, message: 'Unable to check conversation access.' });
+  if (!access.membership || !access.conversation || access.conversation.customer_id !== req.appProfile.id) return res.status(403).json({ success: false, message: 'Only this booking customer can respond to the quotation.' });
+  if (!['proposed', 'change_requested'].includes(quote.data.status)) return res.status(409).json({ success: false, message: 'This quotation has already been answered.' });
+  const responseNote = String(req.body?.notes || '').trim().slice(0, 500);
+  const detection = contactSharingType(responseNote);
+  if (detection) {
+    await dbResult(supabase.from('contact_sharing_attempts').insert({ conversation_id: quote.data.conversation_id, sender_id: req.appProfile.id, detection_type: detection }));
+    return res.status(422).json({ success: false, code: 'CONTACT_DETAILS_BLOCKED', message: 'To protect your privacy and keep your booking secure, please communicate through KaamConnect.' });
+  }
+  if (action === 'accept') {
+    const bookingId = quote.data.booking_id || access.conversation.booking_id;
+    let booking = bookingId
+      ? await dbResult(supabase.from('bookings').update({ final_price: Number(quote.data.total_estimate), updated_at: new Date().toISOString() }).eq('id', bookingId).eq('customer_id', req.appProfile.id).select('*').maybeSingle())
+      : { data: null, error: null };
+    if (booking.error) return res.status(503).json({ success: false, message: 'Unable to apply the accepted quotation to this booking.' });
+    if (!booking.data && !bookingId && access.conversation.job_id) {
+      const job = await dbResult(supabase.from('jobs').select('*').eq('id', access.conversation.job_id).eq('customer_id', req.appProfile.id).maybeSingle());
+      if (job.error || !job.data) return res.status(403).json({ success: false, message: 'The conversation job is unavailable.' });
+      const existing = await dbResult(supabase.from('bookings').select('*').eq('job_id', job.data.id).maybeSingle());
+      if (existing.error) return res.status(503).json({ success: false, message: 'Unable to check the job booking.' });
+      if (existing.data) {
+        if (existing.data.worker_id !== access.conversation.worker_id) return res.status(409).json({ success: false, message: 'This job has been assigned to another worker.' });
+        booking = await dbResult(supabase.from('bookings').update({ final_price: Number(quote.data.total_estimate), updated_at: new Date().toISOString() }).eq('id', existing.data.id).select('*').single());
+      } else {
+        const assigned = job.data.status === 'assigned' ? { data: job.data, error: null } : await dbResult(supabase.from('jobs').update({ status: 'assigned', updated_at: new Date().toISOString() }).eq('id', job.data.id).eq('status', 'open').select('*').maybeSingle());
+        if (assigned.error || !assigned.data) return res.status(409).json({ success: false, message: 'This job has already been assigned or closed.' });
+        booking = await dbResult(supabase.from('bookings').insert({
+          job_id: job.data.id, customer_id: job.data.customer_id, worker_id: access.conversation.worker_id,
+          service_id: job.data.service_id, task_id: job.data.task_id, booking_type: job.data.preferred_date ? 'scheduled' : 'immediate',
+          scheduled_date: job.data.preferred_date, scheduled_slot: job.data.preferred_time, locality: job.data.locality,
+          address_details: job.data.address_details, estimated_price_min: job.data.estimated_price_min,
+          estimated_price_max: job.data.estimated_price_max, final_price: Number(quote.data.total_estimate),
+          payment_method: 'upi', status: 'confirmed', otp: String(Math.floor(1000 + Math.random() * 9000)),
+          metadata: { customerId: req.appProfile.id, customerName: req.appProfile.full_name },
+        }).select('*').single());
+      }
+      if (booking.error || !booking.data) return res.status(503).json({ success: false, message: 'Quotation could not be connected to a booking.' });
+      await dbResult(supabase.from('conversations').update({ booking_id: booking.data.id, updated_at: new Date().toISOString() }).eq('id', access.conversation.id));
+    }
+    if (!booking.data) return res.status(409).json({ success: false, message: 'A valid booking could not be found for this quotation.' });
+    const saved = await dbResult(supabase.from('quotations').update({ status: 'accepted', booking_id: booking.data.id, response_note: responseNote, updated_at: new Date().toISOString() }).eq('id', quote.data.id).select('*').single());
+    if (saved.error) return res.status(503).json({ success: false, message: 'Unable to accept quotation.' });
+    return res.json({ success: true, data: { quotation: saved.data, booking: booking.data } });
+  }
+  const nextStatus = action === 'change' ? 'change_requested' : 'rejected';
+  const { data, error } = await dbResult(supabase.from('quotations').update({ status: nextStatus, response_note: responseNote, updated_at: new Date().toISOString() }).eq('id', quote.data.id).select('*').single());
+  if (error) return res.status(503).json({ success: false, message: 'Unable to save your quotation response.' });
+  res.json({ success: true, data });
+});
+
+app.post('/api/messages/:id/report', requireAuth, async (req, res) => {
+  const reason = String(req.body?.reason || '').trim();
+  if (reason.length < 3 || reason.length > 500) return res.status(400).json({ success: false, message: 'Explain the issue in 3 to 500 characters.' });
+  const message = await dbResult(supabase.from('messages').select('id,conversation_id,sender_id').eq('id', req.params.id).maybeSingle());
+  if (message.error || !message.data) return res.status(404).json({ success: false, message: 'Message not found.' });
+  const access = await getConversationAccess(message.data.conversation_id, req.appProfile.id);
+  if (access.error) return res.status(503).json({ success: false, message: 'Unable to check conversation access.' });
+  if (!access.membership || message.data.sender_id === req.appProfile.id) return res.status(403).json({ success: false, message: 'You can report only messages from another conversation participant.' });
+  const { data, error } = await dbResult(supabase.from('message_reports').insert({ message_id: message.data.id, reporter_id: req.appProfile.id, reason }).select('id,status,created_at').single());
+  if (error) return res.status(error.code === '23505' ? 409 : 503).json({ success: false, message: error.code === '23505' ? 'You already reported this message.' : 'Unable to submit report.' });
+  res.status(201).json({ success: true, data });
+});
+
+app.get('/api/admin/message-reports', requireAdmin, async (req, res) => {
+  const [reports, attempts] = await Promise.all([
+    dbResult(supabase.from('message_reports').select('*').order('created_at', { ascending: false }).limit(100)),
+    dbResult(supabase.from('contact_sharing_attempts').select('*').order('created_at', { ascending: false }).limit(100)),
+  ]);
+  if (reports.error || attempts.error) return res.status(503).json({ success: false, message: 'Unable to load message moderation queue.' });
+  const reportRows = await Promise.all((reports.data || []).map(async (report) => {
+    const message = await dbResult(supabase.from('messages').select('*').eq('id', report.message_id).maybeSingle());
+    const sender = message.data ? await dbResult(supabase.from('users').select('id,full_name,role,is_suspended').eq('id', message.data.sender_id).maybeSingle()) : { data: null, error: null };
+    return { ...report, conversation_id: message.data?.conversation_id || null, message: message.data ? { id: message.data.id, text: message.data.message_text, type: message.data.message_type, sender: sender.data } : null };
+  }));
+  const attemptRows = await Promise.all((attempts.data || []).map(async (attempt) => {
+    const sender = await dbResult(supabase.from('users').select('id,full_name,role').eq('id', attempt.sender_id).maybeSingle());
+    return { ...attempt, sender: sender.data };
+  }));
+  res.json({ success: true, data: { reports: reportRows, contactAttempts: attemptRows } });
+});
+
+app.patch('/api/admin/message-reports/:id', requireAdmin, async (req, res) => {
+  const status = String(req.body?.status || '');
+  if (!['reviewing', 'actioned', 'dismissed'].includes(status)) return res.status(400).json({ success: false, message: 'Choose a valid moderation status.' });
+  const { data, error } = await dbResult(supabase.from('message_reports').update({ status }).eq('id', req.params.id).select('*').maybeSingle());
+  if (error) return res.status(503).json({ success: false, message: 'Unable to update report.' });
+  if (!data) return res.status(404).json({ success: false, message: 'Report not found.' });
+  await dbResult(supabase.from('admin_action_logs').insert({ actor_id: req.appProfile.id, report_id: data.id, action: `message_report_${status}`, notes: String(req.body?.notes || '').slice(0, 500) }));
+  res.json({ success: true, data });
+});
+
+app.patch('/api/admin/users/:id/suspension', requireAdmin, async (req, res) => {
+  const isSuspended = req.body?.isSuspended;
+  if (typeof isSuspended !== 'boolean') return res.status(400).json({ success: false, message: 'Choose whether to suspend this account.' });
+  const { data, error } = await dbResult(supabase.from('users').update({ is_suspended: isSuspended, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('id,full_name,role,is_suspended').maybeSingle());
+  if (error) return res.status(503).json({ success: false, message: 'Unable to update account status.' });
+  if (!data) return res.status(404).json({ success: false, message: 'Account not found.' });
+  await dbResult(supabase.from('admin_action_logs').insert({ actor_id: req.appProfile.id, target_user_id: data.id, action: isSuspended ? 'account_suspended' : 'account_reinstated' }));
+  res.json({ success: true, data });
+});
+
+app.get('/api/admin/conversations/:id', requireAdmin, async (req, res) => {
+  const conversation = await dbResult(supabase.from('conversations').select('*').eq('id', req.params.id).maybeSingle());
+  if (conversation.error) return res.status(503).json({ success: false, message: 'Unable to load conversation.' });
+  if (!conversation.data) return res.status(404).json({ success: false, message: 'Conversation not found.' });
+  const messages = await dbResult(supabase.from('messages').select('*').eq('conversation_id', req.params.id).order('created_at', { ascending: true }).limit(200));
+  if (messages.error) return res.status(503).json({ success: false, message: 'Unable to load conversation messages.' });
+  const quoteIds = messages.data.filter((message) => message.quotation_id).map((message) => message.quotation_id);
+  const quotations = quoteIds.length ? await dbResult(supabase.from('quotations').select('*').in('id', quoteIds)) : { data: [], error: null };
+  if (quotations.error) return res.status(503).json({ success: false, message: 'Unable to load quotations.' });
+  const quotes = new Map((quotations.data || []).map((quote) => [quote.id, quote]));
+  const data = await Promise.all(messages.data.map((message) => messageOutput(message, quotes.get(message.quotation_id) || null)));
+  res.json({ success: true, data: { conversation: conversation.data, messages: data } });
+});
+
+app.patch('/api/admin/conversations/:id', requireAdmin, async (req, res) => {
+  const status = String(req.body?.status || '');
+  if (!['active', 'closed', 'blocked'].includes(status)) return res.status(400).json({ success: false, message: 'Choose a valid conversation status.' });
+  const { data, error } = await dbResult(supabase.from('conversations').update({ status, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').maybeSingle());
+  if (error) return res.status(503).json({ success: false, message: 'Unable to update conversation status.' });
+  if (!data) return res.status(404).json({ success: false, message: 'Conversation not found.' });
+  await dbResult(supabase.from('admin_action_logs').insert({ actor_id: req.appProfile.id, conversation_id: data.id, action: `conversation_${status}`, notes: String(req.body?.notes || '').slice(0, 500) }));
+  res.json({ success: true, data });
 });
 
 app.listen(PORT, () => {

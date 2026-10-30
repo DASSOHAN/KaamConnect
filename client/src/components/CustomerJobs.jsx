@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, CalendarDays, MapPin, RefreshCw, Star, XCircle } from 'lucide-react';
 import { api } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 const tabs = [
   { id: 'all', label: 'All Bookings' },
@@ -22,7 +24,9 @@ const statusLabel = (status) => ({
   arrived: 'Arrived',
 }[status] || status);
 
-export const CustomerJobs = ({ customerId, onBack, onOpenLiveBooking, onRetry }) => {
+export const CustomerJobs = ({ customerId, onBack, onOpenLiveBooking, onOpenChat, onRetry }) => {
+  const navigate = useNavigate();
+  const { session } = useAuth();
   const [jobs, setJobs] = useState([]);
   const [activeTab, setActiveTab] = useState('all');
   const [isLoading, setIsLoading] = useState(true);
@@ -34,7 +38,7 @@ export const CustomerJobs = ({ customerId, onBack, onOpenLiveBooking, onRetry })
     setIsLoading(true);
     setError('');
     try {
-      setJobs(await api.getBookings(customerId));
+      setJobs(await api.getBookings(customerId, session?.access_token));
     } catch (loadError) {
       setError(loadError.message || 'Unable to load your bookings.');
     } finally {
@@ -42,7 +46,9 @@ export const CustomerJobs = ({ customerId, onBack, onOpenLiveBooking, onRetry })
     }
   };
 
-  useEffect(() => { loadJobs(); }, [customerId, onRetry]);
+  useEffect(() => { loadJobs(); }, [customerId, onRetry, session?.access_token]);
+
+  if (!session?.access_token) return <section className="mx-auto max-w-2xl py-12"><div className="rounded-2xl border border-slate-200 bg-white p-6"><h1 className="text-xl font-extrabold text-slate-900">Sign in to view your bookings</h1><p className="mt-2 text-sm text-slate-600">Your booking history is private and linked to your KaamConnect account.</p><button type="button" onClick={() => navigate('/account?next=/bookings')} className="mt-4 rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white">Sign in</button></div></section>;
 
   const visibleJobs = useMemo(() => (
     activeTab === 'all' ? jobs : jobs.filter((job) => job.status === activeTab)
@@ -51,7 +57,7 @@ export const CustomerJobs = ({ customerId, onBack, onOpenLiveBooking, onRetry })
   const cancelJob = async (job) => {
     setActionError('');
     try {
-      const updated = await api.cancelBooking(job.id, customerId);
+      const updated = await api.cancelBooking(job.id, customerId, session?.access_token);
       setJobs((current) => current.map((item) => item.id === updated.id ? updated : item));
     } catch (cancelError) {
       setActionError(cancelError.message);
@@ -122,6 +128,7 @@ export const CustomerJobs = ({ customerId, onBack, onOpenLiveBooking, onRetry })
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 <button type="button" onClick={() => setExpandedJobId((current) => current === job.id ? null : job.id)} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">{expandedJobId === job.id ? 'Hide details' : 'View details'}</button>
+                {job.workerId && onOpenChat && <button type="button" onClick={() => onOpenChat(job)} className="rounded-xl bg-blue-700 px-3 py-2 text-xs font-bold text-white hover:bg-blue-800">Message worker</button>}
                 {['pending', 'accepted', 'en_route'].includes(job.status) && (
                   <button type="button" onClick={() => cancelJob(job)} className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50"><XCircle className="h-3.5 w-3.5" /> Cancel job</button>
                 )}

@@ -35,7 +35,6 @@ export const BookingModal = ({
   const [scheduledDay, setScheduledDay] = useState('today');
   const [scheduledTime, setScheduledTime] = useState('02:00 PM - 04:00 PM');
   const [addressDetails, setAddressDetails] = useState('Flat 3A, Nibedita Apartment, near Ghoshpara Station Road');
-  const [customerPhone, setCustomerPhone] = useState('+91 98300 12345');
   const [customerName, setCustomerName] = useState('Anirban Roy');
   const [selectedPayment, setSelectedPayment] = useState('upi');
 
@@ -78,7 +77,6 @@ export const BookingModal = ({
         setTimeout(() => {
           const newBookingData = {
             customerName: customerName.trim() || 'Valued Kalyani Resident',
-            customerPhone: customerPhone.trim() || '+91 98300 00000',
             serviceId: selectedCat?.id || 'electrician',
             serviceName: selectedCat?.name || 'Electrician',
             taskId: selectedTask?.id || 'task-1',
@@ -381,17 +379,6 @@ export const BookingModal = ({
                     type="text"
                     value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
-                    className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1">
-                    Mobile Phone Number
-                  </label>
-                  <input
-                    type="tel"
-                    value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
                     className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
                   />
                 </div>

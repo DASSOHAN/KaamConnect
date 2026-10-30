@@ -34,6 +34,228 @@
   }
 }
 
+/* One fast brand reveal per document load. The SPA remains mounted below it. */
+.kaam-opening {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100svh;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 48%, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.96) 40%, rgba(241, 245, 249, 0.98) 100%);
+  pointer-events: none;
+  isolation: isolate;
+  animation: kaamOpeningExit 900ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.kaam-opening__ambience,
+.kaam-opening__glow,
+.kaam-opening__streak {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.kaam-opening__ambience {
+  overflow: hidden;
+  animation: kaamAmbienceExit 900ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.kaam-opening__blob {
+  position: absolute;
+  width: clamp(15rem, 32vw, 29rem);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  filter: blur(95px);
+  opacity: 0.23;
+  transform: translate3d(0, 0, 0);
+}
+
+.kaam-opening__blob--blue {
+  left: calc(50% - 27rem);
+  top: calc(50% - 17rem);
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.54), rgba(59, 130, 246, 0) 70%);
+}
+
+.kaam-opening__blob--teal {
+  left: calc(50% + 7rem);
+  top: calc(50% - 4rem);
+  width: clamp(13rem, 26vw, 23rem);
+  opacity: 0.2;
+  background: radial-gradient(circle, rgba(20, 184, 166, 0.48), rgba(20, 184, 166, 0) 70%);
+}
+
+.kaam-opening__blob--amber {
+  left: calc(50% + 2rem);
+  top: calc(50% - 15rem);
+  width: clamp(8rem, 15vw, 13rem);
+  opacity: 0.1;
+  filter: blur(75px);
+  background: radial-gradient(circle, rgba(245, 158, 11, 0.52), rgba(245, 158, 11, 0) 70%);
+}
+
+.kaam-opening__glow {
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  width: min(32rem, 82vw);
+  aspect-ratio: 2.8;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(59, 130, 246, 0.16), rgba(20, 184, 166, 0.08) 48%, transparent 72%);
+  filter: blur(35px);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.92);
+  animation: kaamGlowPulse 900ms ease-out both;
+}
+
+.kaam-opening__streak {
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  width: min(29rem, 74vw);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), rgba(59, 130, 246, 0.18), transparent);
+  opacity: 0;
+  transform: translate(-75%, -50%);
+  animation: kaamStreak 280ms 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.kaam-opening__particle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #60a5fa;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.38);
+  opacity: 0;
+  animation: kaamParticle 350ms 250ms ease-out both;
+}
+
+.kaam-opening__particle--one { --particle-x: -116px; --particle-y: -19px; }
+.kaam-opening__particle--two { --particle-x: 104px; --particle-y: -27px; background: #2dd4bf; animation-delay: 280ms; }
+.kaam-opening__particle--three { --particle-x: -84px; --particle-y: 28px; width: 2px; height: 2px; animation-delay: 300ms; }
+.kaam-opening__particle--four { --particle-x: 128px; --particle-y: 20px; width: 2px; height: 2px; background: #fbbf24; animation-delay: 270ms; }
+.kaam-opening__particle--five { --particle-x: 0px; --particle-y: -37px; width: 2px; height: 2px; background: #2dd4bf; animation-delay: 320ms; }
+
+.kaam-opening__particle {
+  transform: translate3d(var(--particle-x), var(--particle-y), 0);
+}
+
+.kaam-opening__wordmark {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  max-width: calc(100vw - 2rem);
+  font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: clamp(2rem, 8vw, 4rem);
+  font-weight: 800;
+  letter-spacing: -0.055em;
+  line-height: 1;
+  white-space: nowrap;
+  will-change: transform, opacity, filter;
+  animation: kaamWordmarkReveal 900ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.kaam-opening__kaam { color: #0f172a; }
+.kaam-opening__connect {
+  color: #0f766e;
+  background: linear-gradient(100deg, #2563eb 4%, #0f9f8f 70%, #0f766e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.kaam-opening__wordmark::after {
+  position: absolute;
+  inset: 0;
+  content: 'KaamConnect';
+  color: transparent;
+  background: linear-gradient(105deg, transparent 39%, rgba(255, 255, 255, 0.92) 49%, rgba(255, 255, 255, 0.3) 53%, transparent 63%);
+  background-size: 260% 100%;
+  background-position: 100% 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  pointer-events: none;
+  animation: kaamLightSweep 280ms 270ms ease-out both;
+}
+
+@keyframes kaamWordmarkReveal {
+  0% { opacity: 0; filter: blur(6px); transform: translate3d(0, 8px, 0) scale(0.94); }
+  28% { opacity: 1; filter: blur(0); transform: translate3d(0, 0, 0) scale(1); }
+  50% { opacity: 1; filter: blur(0); transform: translate3d(0, 0, 0) scale(1); }
+  100% { opacity: 0; filter: blur(2px); transform: translate3d(0, -2px, 0) scale(1.03); }
+}
+
+@keyframes kaamOpeningExit {
+  0%, 67% { opacity: 1; }
+  100% { opacity: 0; visibility: hidden; }
+}
+
+@keyframes kaamAmbienceExit {
+  0%, 67% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.08); }
+}
+
+@keyframes kaamGlowPulse {
+  0%, 18%, 100% { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+  48% { opacity: 0.65; transform: translate(-50%, -50%) scale(1); }
+  68% { opacity: 0.24; transform: translate(-50%, -50%) scale(1.04); }
+}
+
+@keyframes kaamStreak {
+  0% { opacity: 0; transform: translate(-90%, -50%) scaleX(0.7); }
+  36% { opacity: 0.3; }
+  100% { opacity: 0; transform: translate(-10%, -50%) scaleX(1); }
+}
+
+@keyframes kaamLightSweep {
+  0% { background-position: 100% 0; opacity: 0; }
+  18% { opacity: 0.7; }
+  100% { background-position: 0 0; opacity: 0; }
+}
+
+@keyframes kaamParticle {
+  0% { opacity: 0; }
+  35% { opacity: 0.45; }
+  100% { opacity: 0; transform: translate3d(calc(var(--particle-x) + 5px), calc(var(--particle-y) - 4px), 0); }
+}
+
+@media (max-width: 640px) {
+  .kaam-opening__blob { filter: blur(58px); opacity: 0.16; }
+  .kaam-opening__blob--blue { left: calc(50% - 15rem); top: calc(50% - 12rem); }
+  .kaam-opening__blob--teal { left: calc(50% + 1rem); top: calc(50% - 1rem); opacity: 0.13; }
+  .kaam-opening__blob--amber { left: calc(50% + 1rem); top: calc(50% - 10rem); opacity: 0.07; filter: blur(50px); }
+  .kaam-opening__glow { filter: blur(26px); opacity: 0.8; }
+  .kaam-opening__particle--one { --particle-x: -91px; }
+  .kaam-opening__particle--two { --particle-x: 82px; }
+  .kaam-opening__particle--three { --particle-x: -69px; }
+  .kaam-opening__particle--four { --particle-x: 94px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kaam-opening,
+  .kaam-opening__wordmark,
+  .kaam-opening__ambience,
+  .kaam-opening__glow,
+  .kaam-opening__streak,
+  .kaam-opening__particle,
+  .kaam-opening__wordmark::after {
+    animation: none;
+  }
+
+  .kaam-opening {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
 /* Radar Pulse animations */
 @keyframes radarPing {
   0% { transform: scale(0.6); opacity: 0.85; }

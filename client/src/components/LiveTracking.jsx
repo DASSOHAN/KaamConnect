@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { 
   X, 
-  Phone, 
   MessageSquare, 
   ShieldCheck, 
   Star, 
@@ -21,7 +20,8 @@ export const LiveTracking = ({
   onUpdateStatus,
   onCompleteBooking,
   language,
-  onContactWorker,
+  onOpenChat,
+  canUpdateStatus = false,
 }) => {
   const t = TRANSLATIONS[language] || TRANSLATIONS.en;
   const [selectedRating, setSelectedRating] = useState(5);
@@ -175,19 +175,8 @@ export const LiveTracking = ({
 
               {/* Action Buttons */}
               <div className="flex flex-col gap-1.5">
-                <button
-                  onClick={() => onContactWorker('call', worker.phone, worker.name)}
-                  className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 transition"
-                  title="Direct Call"
-                >
-                  <Phone className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => onContactWorker('whatsapp', worker.phone, worker.name)}
-                  className="p-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition"
-                  title="WhatsApp"
-                >
-                  <MessageSquare className="w-4 h-4" />
+                <button onClick={() => onOpenChat?.(booking)} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-blue-800" title="Message securely in KaamConnect">
+                  <MessageSquare className="h-4 w-4" /> Chat
                 </button>
               </div>
             </div>
@@ -210,7 +199,7 @@ export const LiveTracking = ({
           </div>
 
           {/* Interactive Simulation Helper Button */}
-          {booking.status !== 'completed' && (
+          {canUpdateStatus && booking.status !== 'completed' && (
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between text-xs">
               <div>
                 <span className="font-bold text-blue-900 block">Simulation Step Control</span>

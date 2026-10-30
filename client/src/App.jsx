@@ -17,6 +17,11 @@ import { AdminView } from './components/AdminView';
 import { FairWageExplainer } from './components/FairWageExplainer';
 import { ToastContainer } from './components/Toast';
 import { api } from './services/api';
+import { useAuth } from './contexts/AuthContext';
+import { AccountPage } from './components/AccountPage';
+import { WorkerJobBoard } from './components/WorkerJobBoard';
+import { MessagesPage } from './components/MessagesPage';
+import { AdminMessageModeration } from './components/AdminMessageModeration';
 import { TRANSLATIONS } from './utils/i18n';
 import { getCategoryCatalog } from './utils/workerCategories';
 import { 
@@ -29,6 +34,7 @@ import {
 } from 'lucide-react';
 
 export function App() {
+  const { session, profile, loading: authLoading, signOut, refreshProfile } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -43,7 +49,7 @@ export function App() {
     return next;
   }, { replace: true });
   // Global States
-  const currentRole = pathname === '/admin' ? 'admin' : ['/worker-dashboard', '/dashboard'].includes(pathname) ? 'worker' : 'customer';
+  const currentRole = profile?.role || 'customer';
   const [language, setLanguage] = useState('en');
   const selectedRadius = Number(searchParams.get('radius')) || 3;
   const setSelectedRadius = (value) => updateSearchParam('radius', value === 3 ? '' : value);
@@ -52,8 +58,8 @@ export function App() {
   const searchQuery = searchParams.get('q') || '';
   const [isMobileEmulation, setIsMobileEmulation] = useState(false);
   const [customerId] = useState('demo-customer-1');
-  const [workerOwnerId, setWorkerOwnerId] = useState(() => window.sessionStorage.getItem('kaamconnect-worker-owner') || 'demo-worker-owner');
-  const [currentWorkerId, setCurrentWorkerId] = useState(() => window.sessionStorage.getItem('kaamconnect-worker-id') || '');
+  const [workerOwnerId, setWorkerOwnerId] = useState('');
+  const [currentWorkerId, setCurrentWorkerId] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const searchContainerRef = useRef(null);
@@ -87,13 +93,37 @@ export function App() {
 
   // Toast System
   const [toasts, setToasts] = useState([]);
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+
+  useEffect(() => {
+    if (!session?.access_token) { setUnreadMessageCount(0); return undefined; }
+    let active = true;
+    const refresh = () => api.getUnreadMessageCount(session.access_token).then((data) => { if (active) setUnreadMessageCount(Number(data?.count || 0)); }).catch(() => {});
+    refresh(); const timer = window.setInterval(refresh, 20000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [session?.access_token, pathname]);
+
+  const openBookingChat = async (booking) => {
+    if (!session?.access_token) { navigate('/account?next=/messages'); return; }
+    try {
+      const conversation = await api.createConversation(session.access_token, { bookingId: booking.id });
+      navigate(`/messages/${conversation.id}`);
+    } catch (error) { showToast('Unable to open chat', error.message, 'warning'); }
+  };
+  const openJobChat = async (jobId, workerId) => {
+    if (!session?.access_token) { navigate('/account?next=/messages'); return; }
+    try {
+      const conversation = await api.createConversation(session.access_token, { jobId, workerId });
+      navigate(`/messages/${conversation.id}`);
+    } catch (error) { showToast('Unable to open chat', error.message, 'warning'); }
+  };
 
   const categoryCatalog = useMemo(() => getCategoryCatalog(services, workers), [services, workers]);
   const categorySlug = pathname.match(/^\/workers\/([^/]+)\/?$/)?.[1]?.toLowerCase();
   const activeCategory = categoryCatalog.find((category) =>
     category.id === categorySlug || category.slug === categorySlug
   );
-  const activeWorkerId = currentWorkerId || workers[0]?.id;
+  const activeWorkerId = currentWorkerId;
   const categorySuggestions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
@@ -116,9 +146,31 @@ export function App() {
     navigate(path);
   };
 
-  const handleRoleChange = (role) => {
-    navigateTo(role === 'admin' ? '/admin' : role === 'worker' ? '/worker-dashboard' : '/');
-  };
+  useEffect(() => {
+    if (authLoading) return;
+    const workerOnly = ['/worker-dashboard', '/dashboard', '/worker-jobs', '/register-worker'].includes(pathname);
+    const adminOnly = pathname.startsWith('/admin');
+    const customerOnly = ['/bookings', '/jobs', '/post-job'].includes(pathname) || pathname.startsWith('/jobs/');
+    if (workerOnly && !session) navigate(`/account?next=${encodeURIComponent(pathname)}`, { replace: true });
+    else if (workerOnly && profile?.role !== 'worker') navigate('/', { replace: true });
+    else if (profile?.role === 'worker' && !profile.worker_profile_complete && ['/worker-dashboard', '/dashboard', '/worker-jobs'].includes(pathname)) navigate('/register-worker', { replace: true });
+    else if (adminOnly && profile?.role !== 'admin') navigate('/', { replace: true });
+    else if (customerOnly && profile?.role === 'worker') navigate('/worker-dashboard', { replace: true });
+  }, [authLoading, pathname, session, profile?.role, profile?.worker_profile_complete, navigate]);
+
+  useEffect(() => {
+    if (!session?.access_token || profile?.role !== 'worker' || !profile.worker_profile_complete) return undefined;
+    let active = true;
+    api.getMyWorkerProfile(session.access_token).then((worker) => {
+      if (!active || !worker?.id) return;
+      setCurrentWorkerId(worker.id);
+      setWorkerOwnerId(profile.id);
+      window.sessionStorage.setItem('kaamconnect-worker-id', worker.id);
+      window.sessionStorage.setItem('kaamconnect-worker-owner', profile.id);
+      setWorkers((current) => current.some((item) => item.id === worker.id) ? current.map((item) => item.id === worker.id ? worker : item) : [...current, worker]);
+    }).catch((error) => console.error('Unable to load your worker profile:', error));
+    return () => { active = false; };
+  }, [session?.access_token, profile?.id, profile?.role, profile?.worker_profile_complete]);
 
   const selectCategorySuggestion = (category) => {
     setSearchQuery('');
@@ -128,12 +180,13 @@ export function App() {
     navigateTo(`/workers/${category.slug}`);
   };
 
-  const handleWorkerRegistered = (profile) => {
-    setWorkers((current) => [...current, profile]);
-    setCurrentWorkerId(profile.id);
-    setWorkerOwnerId(profile.ownerId);
-    window.sessionStorage.setItem('kaamconnect-worker-id', profile.id);
-    window.sessionStorage.setItem('kaamconnect-worker-owner', profile.ownerId);
+  const handleWorkerRegistered = async (workerProfile) => {
+    setWorkers((current) => [...current.filter((item) => item.id !== workerProfile.id), workerProfile]);
+    setCurrentWorkerId(workerProfile.id);
+    setWorkerOwnerId(profile.id);
+    window.sessionStorage.setItem('kaamconnect-worker-id', workerProfile.id);
+    window.sessionStorage.setItem('kaamconnect-worker-owner', profile.id);
+    await refreshProfile().catch((error) => console.error('Unable to refresh your account profile:', error));
     navigateTo('/worker-dashboard');
   };
 
@@ -219,12 +272,16 @@ export function App() {
 
   // Handlers for booking triggers
   const handleOpenBookingForCategory = (category) => {
+    if (!session) { navigate('/account?mode=signup&role=customer&next=%2Fbookings'); showToast('Sign in to book a service', 'A customer account is required to create and manage bookings.', 'info'); return; }
+    if (profile?.role !== 'customer') { showToast('Customer account required', 'Sign in with a customer account to book a service.', 'warning'); return; }
     setBookingPreselectedCat(category);
     setBookingPreselectedWorker(null);
     setIsBookingModalOpen(true);
   };
 
   const handleOpenBookingForWorker = (worker) => {
+    if (!session) { navigate('/account?mode=signup&role=customer&next=%2Fbookings'); showToast('Sign in to book a service', 'A customer account is required to create and manage bookings.', 'info'); return; }
+    if (profile?.role !== 'customer') { showToast('Customer account required', 'Sign in with a customer account to book a service.', 'warning'); return; }
     const cat = services.find((c) => c.id === worker.tradeId) || services[0];
     setBookingPreselectedCat(cat);
     setBookingPreselectedWorker(worker);
@@ -232,7 +289,10 @@ export function App() {
   };
 
   const handleBookingConfirmed = async (newBookingData) => {
-    const createdBooking = await api.createBooking({ ...newBookingData, customerId });
+    if (!session || profile?.role !== 'customer') { setIsBookingModalOpen(false); navigate('/account?mode=signup&role=customer&next=%2Fbookings'); return; }
+    let createdBooking;
+    try { createdBooking = await api.createBooking({ ...newBookingData, customerId }, session?.access_token); }
+    catch (error) { showToast('Booking could not be created', error.message, 'warning'); return; }
     const finalBooking = createdBooking || {
       id: `BK-KLY-${Math.floor(1000 + Math.random() * 9000)}`,
       ...newBookingData,
@@ -256,7 +316,8 @@ export function App() {
 
   const handleUpdateBookingStatus = async (newStatus) => {
     if (!activeBooking) return;
-    await api.updateBookingStatus(activeBooking.id, newStatus);
+    if (profile?.role !== 'worker') { showToast('Worker update required', 'Only the assigned worker can change booking progress.', 'info'); return; }
+    await api.updateBookingStatus(activeBooking.id, newStatus, session?.access_token);
     setActiveBooking((prev) => prev ? { ...prev, status: newStatus } : null);
     
     if (newStatus === 'arrived') {
@@ -270,7 +331,7 @@ export function App() {
 
   const handleCompleteBooking = async (rating, tip, review) => {
     if (!activeBooking) return;
-    await api.reviewBooking(activeBooking.id, rating, tip, review);
+    await api.reviewBooking(activeBooking.id, rating, tip, review, session?.access_token);
     const finalAmount = activeBooking.finalPrice + tip;
     showToast(
       'Thank you!',
@@ -280,7 +341,7 @@ export function App() {
   };
 
   const handleToggleWorkerKyc = async (workerId, newKyc) => {
-    await api.toggleWorkerKyc(workerId, newKyc);
+    await api.toggleWorkerKyc(workerId, newKyc, session?.access_token);
     setWorkers((prev) =>
       prev.map((w) => (w.id === workerId ? { ...w, kycVerified: newKyc, aadhaarVerified: newKyc } : w))
     );
@@ -289,29 +350,6 @@ export function App() {
       'Worker verification status updated on Express backend',
       newKyc ? 'success' : 'warning'
     );
-  };
-
-  const handleContactWorker = (type, workerOrPhone, workerName) => {
-    const phone = typeof workerOrPhone === 'string' ? workerOrPhone : workerOrPhone.phone;
-    const name = typeof workerOrPhone === 'string' ? workerName : workerOrPhone.name;
-
-    if (type === 'call') {
-      showToast(
-        `Connecting Call to ${name}`,
-        `Dialing ${phone} via local cellular network`,
-        'info'
-      );
-      window.location.href = `tel:${phone.replace(/\s+/g, '')}`;
-    } else {
-      showToast(
-        `Opening WhatsApp for ${name}`,
-        `Sending task address notes directly via WhatsApp`,
-        'success'
-      );
-      const cleanPhone = phone.replace(/[^\d]/g, '');
-      const text = encodeURIComponent(`Hello ${name}, I am contacting you from KaamConnect Kalyani regarding a home repair task.`);
-      window.open(`https://wa.me/${cleanPhone}?text=${text}`, '_blank');
-    }
   };
 
   return (
@@ -328,7 +366,7 @@ export function App() {
         {/* Persistent Navigation Header */}
         <Header
           currentRole={currentRole}
-          setRole={handleRoleChange}
+          onHome={() => navigateTo('/')}
           language={language}
           setLanguage={setLanguage}
           selectedLocation={selectedLocation}
@@ -340,24 +378,42 @@ export function App() {
           hasActiveBooking={!!activeBooking}
           onOpenActiveBooking={() => setIsLiveTrackingOpen(true)}
           onOpenMyJobs={() => navigateTo('/bookings')}
-          onBecomeWorker={() => navigateTo('/register-worker')}
+          onOpenWorkerDashboard={() => navigateTo('/worker-dashboard')}
+          onOpenWorkerJobs={() => navigateTo('/worker-jobs')}
+          onOpenAdmin={() => navigateTo('/admin')}
+          onOpenMessages={() => navigateTo('/messages')}
+          unreadMessageCount={unreadMessageCount}
+          onOpenAccount={() => navigateTo('/account')}
+          onSignOut={async () => { try { await signOut(); navigate('/', { replace: true }); } catch (error) { showToast('Unable to sign out', error.message, 'warning'); } }}
+          onJoinCustomer={() => navigateTo('/account?mode=signup&role=customer')}
+          onJoinWorker={() => navigateTo('/account?mode=signup&role=worker')}
+          isAuthenticated={!!session}
           locations={locations}
         />
 
         {/* Main Content Area by Perspective Role */}
         <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 w-full">
           {/* CUSTOMER PERSPECTIVE */}
-          {pathname === '/register-worker' ? (
-            <WorkerRegistration
+          {pathname === '/account' ? (
+            <AccountPage />
+          ) : pathname === '/messages' || pathname.match(/^\/messages\/[^/]+\/?$/) ? (
+            <MessagesPage />
+          ) : pathname === '/worker-jobs' ? (
+            <WorkerJobBoard />
+          ) : pathname === '/admin/messages' && currentRole === 'admin' ? (
+            <AdminMessageModeration />
+          ) : pathname === '/register-worker' ? (
+            session && profile?.role === 'worker' && !profile.worker_profile_complete ? <WorkerRegistration
               ownerId={workerOwnerId}
               onBack={() => navigateTo('/')}
               onSuccess={handleWorkerRegistered}
-            />
+            /> : <section className="mx-auto max-w-xl py-12"><div className="rounded-2xl border border-slate-200 bg-white p-6"><h1 className="text-xl font-bold">Worker profile is ready</h1><p className="mt-2 text-sm text-slate-600">Your registered profile is available from the worker dashboard.</p><button type="button" onClick={() => navigate('/worker-dashboard')} className="mt-4 rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white">Open worker dashboard</button></div></section>
           ) : currentRole === 'customer' && (pathname === '/bookings' || pathname === '/jobs') ? (
             <CustomerJobs
               customerId={customerId}
               onBack={() => navigateTo('/')}
               onOpenLiveBooking={(job) => { setActiveBooking(job); setIsLiveTrackingOpen(true); }}
+              onOpenChat={openBookingChat}
             />
           ) : currentRole === 'customer' && pathname === '/post-job' ? (
             <AddJob services={services} locations={locations} customerId={customerId} workers={workers} onBack={() => navigateTo('/')} />
@@ -371,7 +427,6 @@ export function App() {
               onBookWorker={handleOpenBookingForWorker}
               onOpenProfile={(worker) => navigateTo(`/workers/${encodeURIComponent(worker.id)}`)}
               language={language}
-              onContactWorker={(type, w) => handleContactWorker(type, w)}
               isLoading={isWorkersLoading}
               loadError={workerLoadError}
               onRetry={() => setWorkerLoadAttempt((attempt) => attempt + 1)}
@@ -389,7 +444,6 @@ export function App() {
               language={language}
               onBack={() => navigateTo('/workers')}
               onBook={handleOpenBookingForWorker}
-              onContact={(type, worker) => handleContactWorker(type, worker)}
             />
           ) : currentRole === 'customer' && (pathname === '/' || pathname === '/workers') ? (
             <div className="space-y-6">
@@ -477,13 +531,7 @@ export function App() {
                     <span>Post a Job</span>
                   </button>
                   <button
-                    onClick={() => {
-                      if (services.length > 0) {
-                        setBookingPreselectedCat(services[0]);
-                      }
-                      setBookingPreselectedWorker(null);
-                      setIsBookingModalOpen(true);
-                    }}
+                    onClick={() => handleOpenBookingForCategory(services[0])}
                     className="w-full sm:w-auto px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow-sm transition active:scale-95 flex items-center justify-center gap-1.5"
                   >
                     <span>Instant Booking</span>
@@ -506,12 +554,7 @@ export function App() {
               {/* Fair Wage Guarantee Explainer Banner */}
               <FairWageExplainer
                 language={language}
-                onOpenBooking={() => {
-                  if (services.length > 0) {
-                    setBookingPreselectedCat(services[0]);
-                  }
-                  setIsBookingModalOpen(true);
-                }}
+                onOpenBooking={() => handleOpenBookingForCategory(services[0])}
               />
 
               {/* Interactive Worker List with Filtering */}
@@ -522,7 +565,6 @@ export function App() {
                 onBookWorker={handleOpenBookingForWorker}
                 onOpenProfile={(worker) => navigateTo(`/workers/${encodeURIComponent(worker.id)}`)}
                 language={language}
-                onContactWorker={(type, w) => handleContactWorker(type, w)}
                 selectedRadius={selectedRadius}
                 searchQuery={searchQuery}
                 onClearSearch={() => setSearchQuery('')}
@@ -535,7 +577,7 @@ export function App() {
 
           {/* WORKER COCKPIT PERSPECTIVE */}
           {currentRole === 'worker' && (
-            <WorkerWorkspace
+            activeWorkerId ? <WorkerWorkspace
               language={language}
               showToast={showToast}
               workers={workers}
@@ -543,12 +585,13 @@ export function App() {
               workerId={activeWorkerId}
               ownerId={workerOwnerId}
               onBack={() => navigateTo('/')}
+              onBrowseJobs={() => navigateTo('/worker-jobs')}
+              onOpenChat={openBookingChat}
               onJobAcceptedByWorker={(job) => {
                 const matchingWorker = workers[0];
                 setActiveBooking({
                   id: `BK-KLY-${Math.floor(1000 + Math.random() * 9000)}`,
                   customerName: job.customerName,
-                  customerPhone: '+91 98300 55410',
                   serviceId: job.serviceId,
                   serviceName: job.serviceTitle,
                   taskId: 'task-1',
@@ -565,7 +608,7 @@ export function App() {
                   paymentMethod: 'upi',
                 });
               }}
-            />
+            /> : <div role="status" className="mx-auto my-10 max-w-xl rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600">Loading your worker profile…</div>
           )}
 
           {/* REGIONAL ADMIN HUB */}
@@ -576,10 +619,11 @@ export function App() {
               workers={workers}
               analytics={analytics}
               onToggleWorkerKyc={handleToggleWorkerKyc}
+              onOpenMessageModeration={() => navigateTo('/admin/messages')}
             />
           )}
 
-          {!['/', '/workers', '/post-job', '/register-worker', '/bookings', '/jobs', '/worker-dashboard', '/dashboard', '/admin'].includes(pathname) && !activeCategory && !pathname.match(/^\/workers\/[^/]+\/?$/) && !pathname.match(/^\/jobs\/[^/]+\/?$/) && (
+          {!['/', '/workers', '/post-job', '/register-worker', '/bookings', '/jobs', '/worker-dashboard', '/dashboard', '/admin', '/account', '/messages', '/worker-jobs', '/admin/messages'].includes(pathname) && !pathname.match(/^\/messages\/[^/]+\/?$/) && !activeCategory && !pathname.match(/^\/workers\/[^/]+\/?$/) && !pathname.match(/^\/jobs\/[^/]+\/?$/) && (
             <section className="mx-auto max-w-xl py-20 text-center">
               <h1 className="text-2xl font-extrabold text-slate-900">Page not found</h1>
               <p className="mt-2 text-sm text-slate-600">The page you’re looking for doesn’t exist.</p>
@@ -643,8 +687,9 @@ export function App() {
           onClose={() => setIsLiveTrackingOpen(false)}
           onUpdateStatus={handleUpdateBookingStatus}
           onCompleteBooking={handleCompleteBooking}
+          canUpdateStatus={profile?.role === 'worker'}
           language={language}
-          onContactWorker={(type, phone, name) => handleContactWorker(type, phone, name)}
+          onOpenChat={() => openBookingChat(activeBooking)}
         />
       )}
 
