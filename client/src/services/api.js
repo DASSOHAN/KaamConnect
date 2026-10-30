@@ -3,6 +3,29 @@
 const BASE_URL = '/api';
 
 export const api = {
+  createJob: async (job) => {
+    const res = await fetch(`${BASE_URL}/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(job) });
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.message || 'Unable to post your job');
+    return json.data;
+  },
+
+  getJobs: async (customerId) => {
+    const params = new URLSearchParams();
+    if (customerId) params.set('customerId', customerId);
+    const res = await fetch(`${BASE_URL}/jobs?${params}`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.message || 'Unable to load jobs');
+    return Array.isArray(json.data) ? json.data : [];
+  },
+
+  getJob: async (jobId) => {
+    const res = await fetch(`${BASE_URL}/jobs/${encodeURIComponent(jobId)}`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.message || 'Unable to load this job');
+    return json.data;
+  },
+
   // Health
   checkHealth: async () => {
     try {

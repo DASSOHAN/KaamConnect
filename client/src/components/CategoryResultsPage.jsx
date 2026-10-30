@@ -7,6 +7,7 @@ export const CategoryResultsPage = ({
   workers,
   selectedRadius,
   onBookWorker,
+  onOpenProfile,
   language,
   onContactWorker,
   isLoading,
@@ -47,6 +48,7 @@ export const CategoryResultsPage = ({
       selectedCategory={category.id}
       onCategoryChange={() => {}}
       onBookWorker={onBookWorker}
+      onOpenProfile={onOpenProfile}
       language={language}
       onContactWorker={onContactWorker}
       selectedRadius={selectedRadius}

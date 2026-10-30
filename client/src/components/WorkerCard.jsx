@@ -16,6 +16,7 @@ export const WorkerCard = ({
   onBook,
   language,
   onContact,
+  onOpenProfile,
 }) => {
   const [showReviews, setShowReviews] = useState(false);
   const t = TRANSLATIONS[language] || TRANSLATIONS.en;
@@ -52,9 +53,9 @@ export const WorkerCard = ({
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <h3 className="text-base font-bold text-slate-900 truncate">
+              <button type="button" onClick={() => onOpenProfile?.(worker)} className="text-left text-base font-bold text-slate-900 truncate hover:text-blue-700">
                 {getLocalizedWorkerName(worker)}
-              </h3>
+              </button>
               {worker.isDemo ? (
                 <span
                   className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold border border-amber-200"

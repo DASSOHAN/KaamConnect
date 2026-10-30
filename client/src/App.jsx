@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Header } from './components/Header';
 import { ServiceGrid } from './components/ServiceGrid';
 import { WorkerList } from './components/WorkerList';
@@ -8,6 +9,9 @@ import { LiveTracking } from './components/LiveTracking';
 import { WorkerDashboard } from './components/WorkerDashboard';
 import { WorkerWorkspace } from './components/WorkerWorkspace';
 import { CustomerJobs } from './components/CustomerJobs';
+import { AddJob } from './components/AddJob';
+import { WorkerProfileView } from './components/WorkerProfileView';
+import { JobDetails } from './components/JobDetails';
 import { WorkerRegistration } from './components/WorkerRegistration';
 import { AdminView } from './components/AdminView';
 import { FairWageExplainer } from './components/FairWageExplainer';
@@ -25,20 +29,35 @@ import {
 } from 'lucide-react';
 
 export function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const pathname = location.pathname;
+  const rawWorkerPathId = pathname.match(/^\/workers\/([^/]+)\/?$/)?.[1] || '';
+  let workerPathId = rawWorkerPathId;
+  try { workerPathId = decodeURIComponent(rawWorkerPathId); } catch { /* Invalid encoded paths fall through to the not-found state. */ }
+  const updateSearchParam = (key, value) => setSearchParams((current) => {
+    const next = new URLSearchParams(current);
+    if (value && value !== 'all') next.set(key, String(value));
+    else next.delete(key);
+    return next;
+  }, { replace: true });
   // Global States
-  const [currentRole, setCurrentRole] = useState('customer');
+  const currentRole = pathname === '/admin' ? 'admin' : ['/worker-dashboard', '/dashboard'].includes(pathname) ? 'worker' : 'customer';
   const [language, setLanguage] = useState('en');
-  const [selectedRadius, setSelectedRadius] = useState(3);
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  const selectedRadius = Number(searchParams.get('radius')) || 3;
+  const setSelectedRadius = (value) => updateSearchParam('radius', value === 3 ? '' : value);
+  const selectedCategory = searchParams.get('service') || 'all';
+  const setSelectedCategory = (value) => updateSearchParam('service', value);
+  const searchQuery = searchParams.get('q') || '';
   const [isMobileEmulation, setIsMobileEmulation] = useState(false);
   const [customerId] = useState('demo-customer-1');
   const [workerOwnerId, setWorkerOwnerId] = useState(() => window.sessionStorage.getItem('kaamconnect-worker-owner') || 'demo-worker-owner');
   const [currentWorkerId, setCurrentWorkerId] = useState(() => window.sessionStorage.getItem('kaamconnect-worker-id') || '');
-  const [pathname, setPathname] = useState(() => window.location.pathname);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const searchContainerRef = useRef(null);
+  const setSearchQuery = (value) => updateSearchParam('q', value);
 
   // Dynamic Backend Data State
   const [locations, setLocations] = useState([
@@ -47,7 +66,8 @@ export function App() {
     { id: 'b-block', name: 'B-Block Market & More', nameBn: 'বি-ব্লক মার্কেট মোড়', nameHi: 'बी-ब्लॉक मार्केट मोड़', wardOrBlock: 'Block B', isPopular: true },
     { id: 'station', name: 'Kalyani Main Railway Station', nameBn: 'কল্যাণী মেইন স্টেশন', nameHi: 'कल्याणी मुख्य रेलवे स्टेशन', wardOrBlock: 'Station Area', isPopular: true }
   ]);
-  const [selectedLocation, setSelectedLocation] = useState(locations[0]);
+  const selectedLocation = locations.find((item) => item.id === searchParams.get('location') || item.name === searchParams.get('location')) || locations[0];
+  const setSelectedLocation = (value) => updateSearchParam('location', value?.id || '');
   const [services, setServices] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [isWorkersLoading, setIsWorkersLoading] = useState(true);
@@ -83,30 +103,21 @@ export function App() {
   }, [categoryCatalog, searchQuery]);
 
   useEffect(() => {
-    const handlePopState = () => setPathname(window.location.pathname);
     const handleOutsideClick = (event) => {
       if (!searchContainerRef.current?.contains(event.target)) setIsSearchOpen(false);
     };
-    window.addEventListener('popstate', handlePopState);
     document.addEventListener('mousedown', handleOutsideClick);
     return () => {
-      window.removeEventListener('popstate', handlePopState);
       document.removeEventListener('mousedown', handleOutsideClick);
     };
   }, []);
 
   const navigateTo = (path) => {
-    window.history.pushState({}, '', path);
-    setPathname(path);
+    navigate(path);
   };
 
   const handleRoleChange = (role) => {
-    setCurrentRole(role);
-    if (role === 'customer') {
-      // Customer View always opens the discovery homepage. This prevents
-      // booking/dashboard routes from masking the original worker search UI.
-      navigateTo('/');
-    }
+    navigateTo(role === 'admin' ? '/admin' : role === 'worker' ? '/worker-dashboard' : '/');
   };
 
   const selectCategorySuggestion = (category) => {
@@ -123,7 +134,6 @@ export function App() {
     setWorkerOwnerId(profile.ownerId);
     window.sessionStorage.setItem('kaamconnect-worker-id', profile.id);
     window.sessionStorage.setItem('kaamconnect-worker-owner', profile.ownerId);
-    setCurrentRole('worker');
     navigateTo('/worker-dashboard');
   };
 
@@ -172,7 +182,6 @@ export function App() {
 
       if (locs && locs.length > 0) {
         setLocations(locs);
-        setSelectedLocation(locs[0]);
       }
       if (srvs && srvs.length > 0) setServices(srvs);
       if (anl) setAnalytics(anl);
@@ -330,7 +339,7 @@ export function App() {
           setIsMobileEmulation={setIsMobileEmulation}
           hasActiveBooking={!!activeBooking}
           onOpenActiveBooking={() => setIsLiveTrackingOpen(true)}
-          onOpenMyJobs={() => { setCurrentRole('customer'); navigateTo('/bookings'); }}
+          onOpenMyJobs={() => navigateTo('/bookings')}
           onBecomeWorker={() => navigateTo('/register-worker')}
           locations={locations}
         />
@@ -350,12 +359,17 @@ export function App() {
               onBack={() => navigateTo('/')}
               onOpenLiveBooking={(job) => { setActiveBooking(job); setIsLiveTrackingOpen(true); }}
             />
+          ) : currentRole === 'customer' && pathname === '/post-job' ? (
+            <AddJob services={services} locations={locations} customerId={customerId} workers={workers} onBack={() => navigateTo('/')} />
+          ) : currentRole === 'customer' && pathname.match(/^\/jobs\/[^/]+\/?$/) ? (
+            <JobDetails onBack={() => navigateTo('/post-job')} />
           ) : currentRole === 'customer' && activeCategory ? (
             <CategoryResultsPage
               category={activeCategory}
               workers={workers}
               selectedRadius={selectedRadius}
               onBookWorker={handleOpenBookingForWorker}
+              onOpenProfile={(worker) => navigateTo(`/workers/${encodeURIComponent(worker.id)}`)}
               language={language}
               onContactWorker={(type, w) => handleContactWorker(type, w)}
               isLoading={isWorkersLoading}
@@ -366,7 +380,18 @@ export function App() {
                 navigateTo('/');
               }}
             />
-          ) : currentRole === 'customer' && (
+          ) : currentRole === 'customer' && pathname.match(/^\/workers\/[^/]+\/?$/) ? (
+            <WorkerProfileView
+              worker={workers.find((item) => item.id === workerPathId || item.legacyId === workerPathId)}
+              isLoading={isWorkersLoading}
+              loadError={workerLoadError}
+              onRetry={() => setWorkerLoadAttempt((attempt) => attempt + 1)}
+              language={language}
+              onBack={() => navigateTo('/workers')}
+              onBook={handleOpenBookingForWorker}
+              onContact={(type, worker) => handleContactWorker(type, worker)}
+            />
+          ) : currentRole === 'customer' && (pathname === '/' || pathname === '/workers') ? (
             <div className="space-y-6">
               {/* Primary worker search */}
               <section className="mt-4 rounded-2xl border border-blue-100 bg-white p-4 shadow-subtle sm:p-5">
@@ -446,6 +471,12 @@ export function App() {
 
                 <div className="flex items-center gap-2">
                   <button
+                    onClick={() => navigateTo('/post-job')}
+                    className="w-full sm:w-auto px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold rounded-xl shadow-sm transition active:scale-95 flex items-center justify-center gap-1.5"
+                  >
+                    <span>Post a Job</span>
+                  </button>
+                  <button
                     onClick={() => {
                       if (services.length > 0) {
                         setBookingPreselectedCat(services[0]);
@@ -489,6 +520,7 @@ export function App() {
                 selectedCategory={selectedCategory}
                 onCategoryChange={setSelectedCategory}
                 onBookWorker={handleOpenBookingForWorker}
+                onOpenProfile={(worker) => navigateTo(`/workers/${encodeURIComponent(worker.id)}`)}
                 language={language}
                 onContactWorker={(type, w) => handleContactWorker(type, w)}
                 selectedRadius={selectedRadius}
@@ -499,7 +531,7 @@ export function App() {
                 onRetry={() => setWorkerLoadAttempt((attempt) => attempt + 1)}
               />
             </div>
-          )}
+          ) : null}
 
           {/* WORKER COCKPIT PERSPECTIVE */}
           {currentRole === 'worker' && (
@@ -510,7 +542,7 @@ export function App() {
               incomingJobData={incomingJob}
               workerId={activeWorkerId}
               ownerId={workerOwnerId}
-              onBack={() => { setCurrentRole('customer'); navigateTo('/'); }}
+              onBack={() => navigateTo('/')}
               onJobAcceptedByWorker={(job) => {
                 const matchingWorker = workers[0];
                 setActiveBooking({
@@ -545,6 +577,14 @@ export function App() {
               analytics={analytics}
               onToggleWorkerKyc={handleToggleWorkerKyc}
             />
+          )}
+
+          {!['/', '/workers', '/post-job', '/register-worker', '/bookings', '/jobs', '/worker-dashboard', '/dashboard', '/admin'].includes(pathname) && !activeCategory && !pathname.match(/^\/workers\/[^/]+\/?$/) && !pathname.match(/^\/jobs\/[^/]+\/?$/) && (
+            <section className="mx-auto max-w-xl py-20 text-center">
+              <h1 className="text-2xl font-extrabold text-slate-900">Page not found</h1>
+              <p className="mt-2 text-sm text-slate-600">The page you’re looking for doesn’t exist.</p>
+              <button type="button" onClick={() => navigateTo('/')} className="mt-5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">← Back to KaamConnect</button>
+            </section>
           )}
         </main>
 

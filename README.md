@@ -1,32 +1,51 @@
-# React + TypeScript + Vite
+# KaamConnect
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+KaamConnect uses a React/Vite client and an Express API. When Supabase credentials are configured, Express reads and writes marketplace records in Supabase PostgreSQL. The service role key stays on the server. Without credentials, the original mock-backed worker and booking experience remains available; job posting and other database-only features return a friendly setup error.
 
-Currently, two official plugins are available:
+## Supabase setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. Create a Supabase project.
+2. In the Supabase SQL Editor, run [`server/database/schema.sql`](server/database/schema.sql).
+3. Copy `server/.env.example` to `server/.env` and enter the project URL and **service role** key. Never add these values to the React client or commit `server/.env`.
+4. From the KaamConnect project directory install server dependencies and seed the current demo marketplace:
 
-## React Compiler
+   ```powershell
+   npm.cmd install --prefix server
+   npm.cmd run seed --prefix server
+   ```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+5. Start both apps from the project directory:
 
-## Expanding the Oxlint configuration
+   ```powershell
+   npm.cmd run dev
+   ```
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+   Or run the backend and frontend in separate terminals with `npm.cmd run server` and `npm.cmd run client`.
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+The seed command can be run again safely. It preserves the existing service and task IDs used by the UI and maps the existing demo workers into UUID-backed database rows. It adds five fictional demo customers; all demo accounts use placeholder email-like phone identifiers, not real phone numbers.
+
+## Useful commands
+
+```powershell
+npm.cmd install --prefix server
+npm.cmd run seed --prefix server
+npm.cmd run server
+npm.cmd run client
+npm.cmd run build
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+The Supabase schema includes users, workers, worker skills, services, service tasks, locations, jobs, job offers, bookings, and reviews. Worker ratings are recalculated by a PostgreSQL trigger after a review is inserted. Job photo upload is left as an extension point; `jobs.photo_url` is ready for a Supabase Storage URL.
+
+## Persistence check
+
+After applying the schema and seed, start the backend and visit `http://localhost:5000/api/health`, `http://localhost:5000/api/services`, and `http://localhost:5000/api/workers`. Then use the UI/API to change worker duty or rates, create a booking or job, stop and restart the backend, and fetch the records again. The API health response indicates whether Supabase is configured. A live persistence check requires valid credentials for a Supabase project.
+
+## Environment variables
+
+The Express server reads these values from `server/.env`:
+
+```dotenv
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+PORT=5000
+```

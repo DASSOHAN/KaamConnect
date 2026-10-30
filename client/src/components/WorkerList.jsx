@@ -9,6 +9,7 @@ export const WorkerList = ({
   selectedCategory,
   onCategoryChange,
   onBookWorker,
+  onOpenProfile,
   language,
   onContactWorker,
   selectedRadius,
@@ -171,6 +172,7 @@ export const WorkerList = ({
               key={worker.id}
               worker={worker}
               onBook={onBookWorker}
+              onOpenProfile={onOpenProfile}
               language={language}
               onContact={onContactWorker}
             />
