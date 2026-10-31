@@ -104,7 +104,7 @@ export const api = {
     try {
       const res = await apiFetch(`${BASE_URL}/health`);
       return await res.json();
-    } catch (e) {
+    } catch {
       console.warn('Backend not responding yet, fallback active:', e);
       return { status: 'fallback' };
     }
@@ -116,7 +116,7 @@ export const api = {
       const res = await apiFetch(`${BASE_URL}/locations`);
       const json = await res.json();
       return json.data;
-    } catch (e) {
+    } catch {
       return null;
     }
   },
@@ -127,7 +127,7 @@ export const api = {
       const res = await apiFetch(`${BASE_URL}/services`);
       const json = await res.json();
       return json.data;
-    } catch (e) {
+    } catch {
       return null;
     }
   },
@@ -251,7 +251,7 @@ export const api = {
         body: JSON.stringify({ kycVerified }),
       });
       return await res.json();
-    } catch (e) {
+    } catch {
       return { success: false };
     }
   },
@@ -265,7 +265,7 @@ export const api = {
         body: JSON.stringify({ isAvailable, ownerId }),
       });
       return await res.json();
-    } catch (e) {
+    } catch {
       return { success: false };
     }
   },
@@ -292,7 +292,7 @@ export const api = {
       });
       const json = await res.json();
       return json.data;
-    } catch (e) {
+    } catch {
       return null;
     }
   },
@@ -307,7 +307,7 @@ export const api = {
       });
       const json = await res.json();
       return json.data;
-    } catch (e) {
+    } catch {
       return null;
     }
   },
@@ -318,7 +318,7 @@ export const api = {
       const res = await apiFetch(`${BASE_URL}/analytics`);
       const json = await res.json();
       return json.data;
-    } catch (e) {
+    } catch {
       return null;
     }
   },
@@ -329,7 +329,7 @@ export const api = {
       const res = await apiFetch(`${BASE_URL}/jobs/incoming`);
       const json = await res.json();
       return json.data;
-    } catch (e) {
+    } catch {
       return null;
     }
   },
@@ -341,7 +341,7 @@ export const api = {
         method: 'POST',
       });
       return await res.json();
-    } catch (e) {
+    } catch {
       return { success: false };
     }
   },

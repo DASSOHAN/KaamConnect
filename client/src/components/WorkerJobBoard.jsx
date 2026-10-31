@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, BriefcaseBusiness, LoaderCircle, MapPin, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 export const WorkerJobBoard = () => {
   const navigate = useNavigate();

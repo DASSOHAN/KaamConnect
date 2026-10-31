@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Briefcase, Eye, EyeOff, KeyRound, LoaderCircle, Mail, UserRound } from 'lucide-react';
 import { api } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 const categories = [
   ['electrician', 'Electrician'], ['plumber', 'Plumber'], ['carpenter', 'Carpenter'],

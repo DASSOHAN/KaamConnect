@@ -9,7 +9,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = process.env.KAAMCONNECT_DB_PATH || path.join(here, 'kaamconnect.sqlite');
 mkdirSync(path.dirname(dbPath), { recursive: true });
 export const sqlite = new Database(dbPath);
-sqlite.pragma('foreign_keys = ON');
+sqlite.pragma('foreign_keys = OFF');
 sqlite.pragma('journal_mode = WAL');
 sqlite.pragma('busy_timeout = 5000');
 
@@ -28,7 +28,7 @@ for (const file of migrationFiles) {
     const sql = readFileSync(path.join(migrationsDir, file), 'utf8');
     sqlite.exec(sql);
     if (version) {
-      sqlite.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, datetime("now"))').run(version);
+      sqlite.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(?, datetime('now'))").run(version);
     }
   }
 }
@@ -78,6 +78,8 @@ try {
   }
 } catch(error){if(error.code!=='ENOENT')throw error;}
 
+sqlite.pragma('foreign_keys = ON');
+
 const tables = new Set(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(x=>x.name));
 const relationMap = {
  users: { users:'id' }, workers: { users:'user_id',worker_skills:'id' }, services:{ service_tasks:'id' }, service_tasks:{ services:'service_id' },
@@ -85,7 +87,7 @@ const relationMap = {
  job_offers:{workers:'worker_id',jobs:'job_id'}, conversations:{workers:'worker_id',users:'customer_id',jobs:'job_id',bookings:'booking_id'},
  messages:{quotations:'quotation_id'}, quotations:{messages:'id'}
 };
-const toJson = (value) => typeof value==='string' && /^[\[{]/.test(value) ? (()=>{try{return JSON.parse(value)}catch{return value}})() : value;
+const toJson = (value) => typeof value==='string' && /^[[{]/.test(value) ? (()=>{try{return JSON.parse(value)}catch{return value}})() : value;
 const bindValue = (value) => {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (value && typeof value === 'object') return JSON.stringify(value);
@@ -102,7 +104,7 @@ function relation(row, table, name, nested='*') {
   if(nested && nested!=='*' && nested!=='id' && nested.includes('(')) return mapped.map(r=>expandRelations(r,name,nested));
   return (table==='workers'&&name==='worker_skills') || (table==='services'&&name==='service_tasks') ? mapped : mapped[0]||null;
 }
-function inflate(row,table){const out={};for(const [k,v] of Object.entries(row))out[k]=toJson(v);return out;}
+function inflate(row,_table){const out={};for(const [k,v] of Object.entries(row))out[k]=toJson(v);return out;}
 function expandRelations(row,table,selection){const out={...row};let depth=0,start=0;const parts=[];for(let i=0;i<selection.length;i++){if(selection[i]==='(')depth++;else if(selection[i]===')')depth--;else if(selection[i]===','&&depth===0){parts.push(selection.slice(start,i).trim());start=i+1;}}parts.push(selection.slice(start).trim());for(const part of parts){const m=part.match(/^([a-z_]+)(?:![\w]+)?\((.*)\)$/s);if(!m)continue;const [,name,nested]=m,value=relation(row,table,name,nested);out[name]=Array.isArray(value)?value.map(item=>expandRelations(item,name,nested)):value?expandRelations(value,name,nested):value;}return out;}
 
 class Query {
@@ -158,6 +160,6 @@ class Query {
     return {data:rows,error:null,count:result.changes};
   }catch(error){return {data:null,error,count:0};}}
 }
-export const db={from:(table)=>new Query(table),rpc:(name,args)=>Promise.resolve({data:null,error:new Error(`Unsupported SQLite operation ${name}`)})};
+export const db={from:(table)=>new Query(table),rpc:(name,_args)=>Promise.resolve({data:null,error:new Error(`Unsupported SQLite operation ${name}`)})};
 export const dbResult=async (query)=>query;
 export const databaseReady=true;

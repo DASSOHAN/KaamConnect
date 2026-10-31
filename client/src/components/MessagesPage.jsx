@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ImagePlus, LoaderCircle, MessageSquare, Send, ShieldCheck, Flag } from 'lucide-react';
 import { api } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 const privacyMessage = 'To protect your privacy and keep your booking secure, please communicate through KaamConnect.';
 

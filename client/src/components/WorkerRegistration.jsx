@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, CheckCircle2, ImagePlus } from 'lucide-react';
 import { api } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 const categoryOptions = [
   ['electrician', 'Electrician'], ['plumber', 'Plumber'], ['carpenter', 'Carpenter'],

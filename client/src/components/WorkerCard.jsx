@@ -13,7 +13,7 @@ export const WorkerCard = ({
   worker,
   onBook,
   language,
-  onContact,
+  _onContact,
   onOpenProfile,
 }) => {
   const [showReviews, setShowReviews] = useState(false);

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Check, Edit3, Power, RefreshCw, X } from 'lucide-react';
 import { WorkerDashboard } from './WorkerDashboard';
 import { api } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 export const WorkerWorkspace = ({ workerId, ownerId, workers, incomingJobData, language, showToast, onBack, onJobAcceptedByWorker, onBrowseJobs, onOpenChat }) => {
   const { session } = useAuth();

@@ -6,7 +6,7 @@ import { WorkerList } from './components/WorkerList';
 import { CategoryResultsPage } from './components/CategoryResultsPage';
 import { BookingModal } from './components/BookingModal';
 import { LiveTracking } from './components/LiveTracking';
-import { WorkerDashboard } from './components/WorkerDashboard';
+// WorkerDashboard removed
 import { WorkerWorkspace } from './components/WorkerWorkspace';
 import { CustomerJobs } from './components/CustomerJobs';
 import { AddJob } from './components/AddJob';
@@ -17,20 +17,20 @@ import { AdminView } from './components/AdminView';
 import { FairWageExplainer } from './components/FairWageExplainer';
 import { ToastContainer } from './components/Toast';
 import { api } from './services/api';
-import { useAuth } from './contexts/AuthContext';
+import { useAuth } from './hooks/useAuth';
 import { AccountPage } from './components/AccountPage';
 import { WorkerJobBoard } from './components/WorkerJobBoard';
 import { MessagesPage } from './components/MessagesPage';
 import { PublicJobBoard } from './components/PublicJobBoard';
 import { AdminMessageModeration } from './components/AdminMessageModeration';
 import { HomeElectronicsCare } from './components/HomeElectronicsCare';
-import { TRANSLATIONS } from './utils/i18n';
+// TRANSLATIONS removed
 import { getCategoryCatalog } from './utils/workerCategories';
 import { 
   MapPin, 
   ShieldCheck, 
   ArrowRight,
-  Sparkles,
+
   Search,
   X
 } from 'lucide-react';
@@ -112,7 +112,7 @@ export function App() {
       navigate(`/messages/${conversation.id}`);
     } catch (error) { showToast('Unable to open chat', error.message, 'warning'); }
   };
-  const openJobChat = async (jobId, workerId) => {
+  const _unusedOpenJobChat = async (jobId, workerId) => {
     if (!session?.user) { navigate('/account?next=/messages'); return; }
     try {
       const conversation = await api.createConversation(session.user, { jobId, workerId });
@@ -691,7 +691,7 @@ export function App() {
             </div>
 
             <div className="text-slate-400 text-[11px]">
-              © {new Date().getFullYear()} KaamConnect. All rights reserved.
+              © {2026} KaamConnect. All rights reserved.
             </div>
           </div>
         </footer>

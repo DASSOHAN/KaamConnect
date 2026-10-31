@@ -2,12 +2,12 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, RefreshCw, ShieldAlert } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 export function AdminMessageModeration() {
   const { session, profile } = useAuth(); const navigate = useNavigate();
   const [queue, setQueue] = useState({ reports: [], contactAttempts: [] }); const [error, setError] = useState(''); const [inspected, setInspected] = useState(null);
-  const load = useCallback(async () => { if (!session?.user) return; try { setQueue(await api.getAdminMessageReports(session.user)); setError(''); } catch (err) { setError(err.message); } }, [session?.user]);
+  const load = useCallback(async () => { if (!session?.user) return; try { setQueue(await api.getAdminMessageReports(session.user)); setError(''); } catch (err) { setError(err.message); } }, [session]);
   useEffect(() => { load(); }, [load]);
   const updateReport = async (report, status) => { try { await api.updateAdminMessageReport(session.user, report.id, { status }); await load(); } catch (err) { setError(err.message); } };
   const suspend = async (userId, current) => { try { await api.moderateAccount(session.user, userId, !current); await load(); } catch (err) { setError(err.message); } };

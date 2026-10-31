@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, CalendarDays, MapPin, RefreshCw, Star, XCircle } from 'lucide-react';
 import { api } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 const tabs = [
   { id: 'all', label: 'All Bookings' },
@@ -48,11 +48,13 @@ export const CustomerJobs = ({ customerId, onBack, onOpenLiveBooking, onOpenChat
 
   useEffect(() => { loadJobs(); }, [customerId, onRetry, session?.user]);
 
-  if (!session?.user) return <section className="mx-auto max-w-2xl py-12"><div className="rounded-2xl border border-slate-200 bg-white p-6"><h1 className="text-xl font-extrabold text-slate-900">Sign in to view your bookings</h1><p className="mt-2 text-sm text-slate-600">Your booking history is private and linked to your KaamConnect account.</p><div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => navigate('/account?reason=dashboard&next=%2Fbookings')} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white">Sign in</button><button type="button" onClick={() => navigate('/account?mode=signup&role=customer&reason=dashboard&next=%2Fbookings')} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700">Create customer account</button></div></div></section>;
+  const notSignedIn = !session?.user;
 
   const visibleJobs = useMemo(() => (
     activeTab === 'all' ? jobs : jobs.filter((job) => job.status === activeTab)
   ), [activeTab, jobs]);
+
+  if (notSignedIn) return <section className="mx-auto max-w-2xl py-12"><div className="rounded-2xl border border-slate-200 bg-white p-6"><h1 className="text-xl font-extrabold text-slate-900">Sign in to view your bookings</h1><p className="mt-2 text-sm text-slate-600">Your booking history is private and linked to your KaamConnect account.</p><div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => navigate('/account?reason=dashboard&next=%2Fbookings')} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white">Sign in</button><button type="button" onClick={() => navigate('/account?mode=signup&role=customer&reason=dashboard&next=%2Fbookings')} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700">Create customer account</button></div></div></section>;
 
   const cancelJob = async (job) => {
     setActionError('');

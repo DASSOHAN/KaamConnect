@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ArrowLeft, BriefcaseBusiness, LoaderCircle } from 'lucide-react';
 import { api } from '../services/api';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 export const AddJob = ({ services = [], locations = [], onBack, onPosted, workers = [] }) => {
   const navigate = useNavigate();

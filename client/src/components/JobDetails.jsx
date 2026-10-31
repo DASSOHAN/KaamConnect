@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, MapPin, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 export const JobDetails = ({ onBack }) => {
   const { id } = useParams();
@@ -17,7 +17,7 @@ export const JobDetails = ({ onBack }) => {
   const [accepting, setAccepting] = useState('');
   useEffect(() => {
     let active = true;
-    setLoading(true); setError('');
+    setError('');
     api.getJob(id, session?.user).then((result) => { if (active) setJob(result); })
       .catch((requestError) => { if (active) setError(requestError.message || 'Unable to load this job.'); })
       .finally(() => { if (active) setLoading(false); });

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { AirVent, ArrowLeft, ArrowRight, Blend, Check, CircuitBoard, ClipboardList, Coffee, CookingPot, Droplets, Fan, Flame, Heater, Microwave, Minus, Plus, Refrigerator, ShieldCheck, Tv, WashingMachine, Wind } from 'lucide-react';
 import { api } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 const ICONS = {
   'air-conditioner': AirVent,

@@ -4,6 +4,7 @@ import cors from 'cors';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 import multer from 'multer';
 import {
   INITIAL_LOCATIONS,
@@ -19,12 +20,13 @@ import { SQLiteSessionStore } from './database/session-store.js';
 import { buildElectronicsCareCatalog, validateElectronicsCareRequest } from './electronicsCare.js';
 
 const app = express();
+app.set('trust proxy', 1);
 dotenv.config({ path: path.join(path.dirname(fileURLToPath(import.meta.url)), '.env') });
 const PORT = process.env.PORT || 5000;
 const PERSISTENCE_FILE = path.join(process.cwd(), 'server', 'runtime-data.json');
 const uploadRoot=path.join(path.dirname(fileURLToPath(import.meta.url)),'uploads');
 const imageUpload=multer({storage:multer.diskStorage({destination:(req,file,cb)=>{const folder=path.join(uploadRoot,req.path.startsWith('/api/workers/photo')?'worker-avatars':'chat-attachments');fs.mkdirSync(folder,{recursive:true});cb(null,folder);},filename:(req,file,cb)=>cb(null,`${randomUUID()}${path.extname(file.originalname).toLowerCase()}`)}),limits:{fileSize:8*1024*1024},fileFilter:(req,file,cb)=>cb(null,['image/jpeg','image/png','image/webp'].includes(file.mimetype))});
-const chatImageUpload=multer({storage:multer.diskStorage({destination:(req,file,cb)=>{const folder=path.join(uploadRoot,'chat-attachments',req.params.id,req.session.userId);fs.mkdirSync(folder,{recursive:true});cb(null,folder);},filename:(req,file,cb)=>cb(null,`${randomUUID()}${path.extname(file.originalname).toLowerCase()}`)}),limits:{fileSize:8*1024*1024},fileFilter:(req,file,cb)=>cb(null,['image/jpeg','image/png','image/webp'].includes(file.mimetype))});
+const chatImageUpload=multer({storage:multer.diskStorage({destination:(req,file,cb)=>{const userId=req.session?.userId||req.appProfile?.id||'anonymous';const folder=path.join(uploadRoot,'chat-attachments',String(req.params.id),String(userId));fs.mkdirSync(folder,{recursive:true});cb(null,folder);},filename:(req,file,cb)=>cb(null,`${randomUUID()}${path.extname(file.originalname).toLowerCase()}`)}),limits:{fileSize:8*1024*1024},fileFilter:(req,file,cb)=>cb(null,['image/jpeg','image/png','image/webp'].includes(file.mimetype))});
 const workerPhotoRoot=path.join(uploadRoot,'worker-avatars');
 app.use('/api/worker-avatars',express.static(workerPhotoRoot,{fallthrough:false,maxAge:'1d'}));
 
@@ -1624,6 +1626,41 @@ app.patch('/api/admin/conversations/:id', requireAdmin, async (req, res) => {
   await dbResult(db.from('admin_action_logs').insert({ actor_id: req.appProfile.id, conversation_id: data.id, action: `conversation_${status}`, notes: String(req.body?.notes || '').slice(0, 500) }));
   res.json({ success: true, data });
 });
+
+// -------------------------------------------------------------
+// Unified Full-Stack Hosting: Serve Frontend from Express
+// -------------------------------------------------------------
+const clientDistPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'client', 'dist');
+const rootPublicPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+
+if (fs.existsSync(rootPublicPath)) {
+  app.use(express.static(rootPublicPath));
+}
+
+if (!fs.existsSync(clientDistPath) && process.env.NODE_ENV !== 'test') {
+  try {
+    console.log('[KaamConnect Server] Building frontend assets for full-stack delivery...');
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    execSync(`${npmCmd} --prefix client run build`, {
+      stdio: 'inherit',
+      cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+    });
+  } catch (err) {
+    console.warn('[KaamConnect Server] Could not build client automatically:', err.message);
+  }
+}
+
+if (fs.existsSync(clientDistPath)) {
+  app.use(express.static(clientDistPath));
+
+  // Catch-all route to support client-side routing (React Router)
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) {
+      return res.status(404).json({ success: false, message: 'API route not found' });
+    }
+    res.sendFile(path.join(clientDistPath, 'index.html'));
+  });
+}
 
 const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isDirectRun && process.env.NODE_ENV !== 'test') {
