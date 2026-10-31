@@ -16,6 +16,7 @@ import bcrypt from 'bcryptjs';
 import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { dbResult, db, databaseReady, sqlite } from './database/sqlite.js';
 import { SQLiteSessionStore } from './database/session-store.js';
+import { getAudioDurationSeconds } from './media/audio-duration.js';
 
 
 const app = express();
@@ -23,10 +24,23 @@ dotenv.config({ path: path.join(path.dirname(fileURLToPath(import.meta.url)), '.
 const PORT = process.env.PORT || 5000;
 const PERSISTENCE_FILE = path.join(process.cwd(), 'server', 'runtime-data.json');
 const uploadRoot=path.join(path.dirname(fileURLToPath(import.meta.url)),'uploads');
-const imageUpload=multer({storage:multer.diskStorage({destination:(req,file,cb)=>{const folder=path.join(uploadRoot,req.path.startsWith('/api/workers/photo')?'worker-avatars':'chat-attachments');fs.mkdirSync(folder,{recursive:true});cb(null,folder);},filename:(req,file,cb)=>cb(null,`${randomUUID()}${path.extname(file.originalname).toLowerCase()}`)}),limits:{fileSize:8*1024*1024},fileFilter:(req,file,cb)=>cb(null,['image/jpeg','image/png','image/webp'].includes(file.mimetype))});
+const privateJobRoot=path.join(uploadRoot,'private-jobs');
+const jobMediaUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:5*1024*1024,files:6,fields:20}});
+const imageUpload=multer({storage:multer.diskStorage({destination:(req,file,cb)=>{const folder=path.join(uploadRoot,'worker-avatars',req.appProfile.id);fs.mkdirSync(folder,{recursive:true});cb(null,folder);},filename:(req,file,cb)=>cb(null,`${randomUUID()}${path.extname(file.originalname).toLowerCase()}`)}),limits:{fileSize:5*1024*1024,files:1},fileFilter:(req,file,cb)=>{const ext=path.extname(file.originalname).toLowerCase(),valid={'image/jpeg':['.jpg','.jpeg'],'image/png':['.png'],'image/webp':['.webp']};cb(null,Boolean(valid[file.mimetype]?.includes(ext)));}});
 const chatImageUpload=multer({storage:multer.diskStorage({destination:(req,file,cb)=>{const folder=path.join(uploadRoot,'chat-attachments',req.params.id,req.session.userId);fs.mkdirSync(folder,{recursive:true});cb(null,folder);},filename:(req,file,cb)=>cb(null,`${randomUUID()}${path.extname(file.originalname).toLowerCase()}`)}),limits:{fileSize:8*1024*1024},fileFilter:(req,file,cb)=>cb(null,['image/jpeg','image/png','image/webp'].includes(file.mimetype))});
 const workerPhotoRoot=path.join(uploadRoot,'worker-avatars');
 app.use('/api/worker-avatars',express.static(workerPhotoRoot,{fallthrough:false,maxAge:'1d'}));
+
+// Remove interrupted job uploads and unreferenced profile photos without
+// touching files outside the dedicated upload folders.
+const cleanupOrphanedUploads=()=>{
+  const media=sqlite.prepare('SELECT job_id,storage_name FROM job_media').all();
+  const knownJobFiles=new Set(media.map((item)=>`${item.job_id}/${item.storage_name}`));
+  if(fs.existsSync(privateJobRoot))for(const folder of fs.readdirSync(privateJobRoot,{withFileTypes:true}))if(folder.isDirectory()&&/^[0-9a-f-]{36}$/i.test(folder.name)){const folderPath=path.join(privateJobRoot,folder.name);for(const file of fs.readdirSync(folderPath,{withFileTypes:true}))if(file.isFile()&&!knownJobFiles.has(`${folder.name}/${file.name}`))fs.rmSync(path.join(folderPath,file.name),{force:true});}
+  const knownPhotos=new Set(sqlite.prepare("SELECT profile_photo_url FROM workers WHERE profile_photo_url LIKE '/api/worker-avatars/%'").all().map((row)=>row.profile_photo_url.slice('/api/worker-avatars/'.length)));
+  if(fs.existsSync(workerPhotoRoot))for(const userFolder of fs.readdirSync(workerPhotoRoot,{withFileTypes:true}))if(userFolder.isDirectory()&&/^[0-9a-f-]{36}$/i.test(userFolder.name)){const folderPath=path.join(workerPhotoRoot,userFolder.name);for(const file of fs.readdirSync(folderPath,{withFileTypes:true}))if(file.isFile()&&!knownPhotos.has(`${userFolder.name}/${file.name}`))fs.rmSync(path.join(folderPath,file.name),{force:true});}
+};
+cleanupOrphanedUploads();
 
 if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
   throw new Error('Set SESSION_SECRET to a random value of at least 32 characters in server/.env.');
@@ -275,8 +289,12 @@ const requireAdmin = (req, res, next) => requireAuth(req, res, () => {
 
 app.post('/api/workers/photo',requireAuth,(req,res,next)=>req.appProfile.role!=='worker'?res.status(403).json({success:false,message:'Worker account required.'}):next(),imageUpload.single('photo'),(req,res)=>{
   if(!req.file)return res.status(400).json({success:false,message:'Choose a JPG, PNG or WebP image under 5 MB.'});
-  if(req.file.size>5*1024*1024){fs.unlinkSync(req.file.path);return res.status(413).json({success:false,message:'Profile photos must be under 5 MB.'});}
-  res.json({success:true,data:{url:`/api/worker-avatars/${req.file.filename}`}});
+  const signature=fs.readFileSync(req.file.path),valid=req.file.mimetype==='image/jpeg'?signature.subarray(0,3).toString('hex')==='ffd8ff':req.file.mimetype==='image/png'?signature.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])):signature.subarray(0,4).toString()==='RIFF'&&signature.subarray(8,12).toString()==='WEBP';
+  if(!valid){fs.unlinkSync(req.file.path);return res.status(400).json({success:false,message:'The selected file is not a valid JPG, PNG or WebP image.'});}
+  const url=`/api/worker-avatars/${req.appProfile.id}/${req.file.filename}`;
+  const worker=sqlite.prepare('SELECT id FROM workers WHERE user_id=?').get(req.appProfile.id);
+  if(worker){const result=sqlite.prepare('UPDATE workers SET profile_photo_url=?,updated_at=? WHERE id=? AND user_id=?').run(url,new Date().toISOString(),worker.id,req.appProfile.id);if(!result.changes){fs.unlinkSync(req.file.path);return res.status(403).json({success:false,message:'You can only update your own photo.'});}}
+  res.json({success:true,data:{url}});
 });
 app.post('/api/conversations/:id/attachments',requireAuth,(req,res,next)=>{
   const access=sqlite.prepare('SELECT 1 FROM conversation_participants WHERE conversation_id=? AND user_id=?').get(req.params.id,req.appProfile.id);
@@ -504,7 +522,7 @@ app.post('/api/workers/register', optionalAuth, async (req, res) => {
     if (userError) return res.status(userError.code === '23505' ? 409 : 503).json({ success: false, message: userError.code === '23505' ? 'A worker profile already uses this mobile number.' : 'Unable to create worker account.' });
     const profilePhoto = String(avatar || '').trim();
     const allowedPhotoPrefix = '/api/worker-avatars/';
-    if (profilePhoto && !profilePhoto.startsWith(allowedPhotoPrefix)) return res.status(400).json({ success: false, message: 'Upload your profile photo using the KaamConnect photo control.' });
+    if (profilePhoto && !profilePhoto.startsWith(`${allowedPhotoPrefix}${req.appProfile.id}/`)) return res.status(400).json({ success: false, message: 'Upload your profile photo using the KaamConnect photo control.' });
     const { data: row, error } = await dbResult(db.from('workers').upsert({ user_id: user.id, trade_id: tradeId, bio: String(bio || '').trim().slice(0, 500), profile_photo_url: profilePhoto, locality: cleanLocality, is_available: availability !== false, experience_years: years, half_day_rate: halfRate, daily_rate: fullRate, metadata: { ownerId: String(req.appProfile.id), tradeTitle: cleanTradeTitle, workingHours: String(workingHours || '09:00 AM - 07:00 PM'), isDemo: false, workerRegistrationComplete: true } }, { onConflict: 'user_id' }).select('*, users(*)').single());
     if (error) return res.status(503).json({ success: false, message: 'Unable to save worker profile.' });
     await dbResult(db.from('worker_skills').delete().eq('worker_id', row.id));
@@ -606,7 +624,7 @@ app.patch('/api/workers/:id/profile', optionalAuth, async (req, res) => {
     if (body.dailyRate !== undefined) update.daily_rate = Number(body.dailyRate);
     if (body.availability !== undefined) update.is_available = Boolean(body.availability);
     if (body.bio !== undefined) update.bio = String(body.bio).slice(0, 500);
-    if (body.avatar !== undefined) update.profile_photo_url = String(body.avatar);
+    if (body.avatar !== undefined) { const avatar=String(body.avatar); if(avatar && !avatar.startsWith(`/api/worker-avatars/${req.appProfile.id}/`))return res.status(400).json({success:false,message:'Upload your profile photo using the KaamConnect photo control.'}); update.profile_photo_url = avatar; }
     update.updated_at = new Date().toISOString();
     update.metadata = { ...found.data.metadata, ...(body.workingHours !== undefined ? { workingHours: body.workingHours } : {}), ...(body.tradeTitle !== undefined ? { tradeTitle: body.tradeTitle } : {}) };
     const { error } = await dbResult(db.from('workers').update(update).eq('id', found.data.id));
@@ -1083,6 +1101,56 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
   res.status(201).json({ success: true, message: 'Job posted successfully.', data });
 });
 
+// Job media is written only after a customer job is validated and created. Files
+// stay outside public/static directories and are served through checked routes.
+app.post('/api/jobs/with-media', requireAuth, (req,res,next)=>jobMediaUpload.fields([{name:'photos',maxCount:5},{name:'voice',maxCount:1}])(req,res,(error)=>error?next(error):next()), async (req,res)=>{
+  if(req.appProfile.role!=='customer')return res.status(403).json({success:false,message:'Only customer accounts can post jobs.'});
+  const files=[...(req.files?.photos||[]),...(req.files?.voice||[])];
+  const photos=req.files?.photos||[], voices=req.files?.voice||[];
+  if(photos.length>5||voices.length>1)return res.status(400).json({success:false,message:'Add up to 5 photos and one voice note.'});
+  const validImage=(b)=>b.subarray(0,3).toString('hex')==='ffd8ff'||b.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))||b.subarray(0,4).toString()==='RIFF'&&b.subarray(8,12).toString()==='WEBP';
+  const audioBaseType=(f)=>String(f.mimetype||'').split(';',1)[0].trim().toLowerCase();
+  const audioCodecSupported=(f)=>{const params=String(f.mimetype||'').split(';').slice(1).map((part)=>part.trim().toLowerCase().replace(/\s+/g,''));return params.length===0||params.every((part)=>/^codecs="?(opus|mp4a\.40\.2)"?$/.test(part));};
+  const validAudio=(f)=>{
+    const type=audioBaseType(f),extension=path.extname(f.originalname||'').toLowerCase();
+    if(type==='audio/webm')return extension==='.webm'&&f.buffer.length>=4&&f.buffer.subarray(0,4).equals(Buffer.from([0x1a,0x45,0xdf,0xa3]));
+    if(type==='audio/mp4')return ['.m4a','.mp4'].includes(extension)&&f.buffer.length>=16&&f.buffer.readUInt32BE(0)>=16&&f.buffer.subarray(4,8).toString()==='ftyp';
+    return false;
+  };
+  for(const file of photos)if(!['image/jpeg','image/png','image/webp'].includes(file.mimetype)||!validImage(file.buffer))return res.status(400).json({success:false,message:'A photo has an unsupported or invalid image format.'});
+  const voiceLength=voices[0]?getAudioDurationSeconds(voices[0].buffer,voices[0].mimetype):null;
+  for(const file of voices)if(!['audio/webm','audio/mp4'].includes(audioBaseType(file))||!audioCodecSupported(file)||!validAudio(file))return res.status(400).json({success:false,message:'The voice note format is not supported. Use a valid WebM/Opus or MP4 audio recording.'});
+  const reportedVoiceLength=Number(req.body?.voiceDuration);
+  const voiceDurationIsInvalid=voices.length&&(!Number.isFinite(voiceLength)||voiceLength<1||voiceLength>30.05||!Number.isFinite(reportedVoiceLength)||reportedVoiceLength<1||reportedVoiceLength>30||Math.abs(voiceLength-reportedVoiceLength)>1);
+  if(voiceDurationIsInvalid)return res.status(400).json({success:false,message:'Voice notes must be between 1 and 30 seconds. Please record again.'});
+  const body=req.body||{},title=String(body.title||'').trim(),serviceId=String(body.serviceId||'').trim(),locality=String(body.locality||'').trim();
+  if(title.length<3||!serviceId||locality.length<2)return res.status(400).json({success:false,message:'Enter a job title, service and location.'});
+  if(contactSharingType(`${title}\n${body.description||''}\n${body.addressDetails||''}`))return res.status(422).json({success:false,code:'CONTACT_DETAILS_BLOCKED',message:'To protect your privacy and keep your booking secure, please communicate through KaamConnect.'});
+  const service=await dbResult(db.from('services').select('id').eq('id',serviceId).eq('active',true).maybeSingle());
+  if(service.error||!service.data)return res.status(400).json({success:false,message:'Choose a valid service.'});
+  if(body.taskId&&!await dbResult(db.from('service_tasks').select('id').eq('id',body.taskId).eq('service_id',serviceId).maybeSingle()).then(r=>r.data))return res.status(400).json({success:false,message:'Choose a valid task.'});
+  const now=new Date().toISOString(),jobId=randomUUID(),saved=[]; let folder;
+  try{
+    folder=path.join(privateJobRoot,jobId);fs.mkdirSync(folder,{recursive:true});
+    const entries=[...photos.map((f)=>({file:f,type:'photo',duration:null})),...voices.map((f)=>({file:f,type:'voice',duration:Math.round(voiceLength*10)/10}))];
+    const metadata=entries.map(({file,type,duration})=>{const storageName=`${randomUUID()}${type==='photo'?(file.mimetype==='image/jpeg'?'.jpg':file.mimetype==='image/png'?'.png':'.webp'):(file.mimetype==='audio/mp4'?'.m4a':'.webm')}`;fs.writeFileSync(path.join(folder,storageName),file.buffer,{flag:'wx'});saved.push(path.join(folder,storageName));return {id:randomUUID(),job_id:jobId,media_type:type,storage_name:storageName,mime_type:file.mimetype,file_size:file.size,duration_seconds:duration,created_at:now};});
+    sqlite.transaction(()=>{sqlite.prepare('INSERT INTO jobs(id,customer_id,service_id,task_id,title,description,locality,address_details,urgency,preferred_date,preferred_time,estimated_price_min,estimated_price_max,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(jobId,req.appProfile.id,serviceId,body.taskId||null,title,String(body.description||'').slice(0,4000),locality,String(body.addressDetails||''),['normal','urgent','emergency'].includes(body.urgency)?body.urgency:'normal',body.preferredDate||null,body.preferredTime||null,Number(body.estimatedPriceMin)||null,Number(body.estimatedPriceMax)||null,'open',now,now);const insert=sqlite.prepare('INSERT INTO job_media(id,job_id,media_type,storage_name,mime_type,file_size,duration_seconds,created_at) VALUES(@id,@job_id,@media_type,@storage_name,@mime_type,@file_size,@duration_seconds,@created_at)');metadata.forEach(x=>insert.run(x));})();
+    return res.status(201).json({success:true,message:'Job posted successfully.',data:{id:jobId,title,description:String(body.description||''),locality,status:'open',created_at:now,media:metadata.map(({id,media_type,mime_type,file_size,duration_seconds})=>({id,type:media_type,mimeType:mime_type,size:file_size,durationSeconds:duration_seconds}))}});
+  }catch(error){for(const file of saved)try{fs.unlinkSync(file)}catch{};try{if(folder)fs.rmSync(folder,{recursive:true,force:true})}catch{};console.error('[POST /api/jobs/with-media]',error.message);return res.status(503).json({success:false,message:'Unable to post this job.'});}
+});
+
+const jobMediaAccess=async(req)=>{
+  const job=sqlite.prepare('SELECT id,customer_id,service_id,status FROM jobs WHERE id=?').get(req.params.id);if(!job||!req.appProfile)return null;
+  if(job.customer_id===req.appProfile.id)return job;
+  if(req.appProfile.role!=='worker')return null;
+  const worker=sqlite.prepare('SELECT id,trade_id FROM workers WHERE user_id=?').get(req.appProfile.id);if(!worker||worker.trade_id!==job.service_id)return null;
+  const offer=sqlite.prepare('SELECT 1 FROM job_offers WHERE job_id=? AND worker_id=?').get(job.id,worker.id);
+  const booking=sqlite.prepare('SELECT 1 FROM bookings WHERE job_id=? AND worker_id=?').get(job.id,worker.id);
+  return job.status==='open'||offer||booking?job:null;
+};
+app.get('/api/jobs/:id/media',requireAuth,async(req,res)=>{const job=await jobMediaAccess(req);if(!job)return res.sendStatus(404);const rows=sqlite.prepare('SELECT id,media_type,mime_type,file_size,duration_seconds FROM job_media WHERE job_id=? ORDER BY created_at').all(job.id);res.json({success:true,data:rows.map(x=>({id:x.id,type:x.media_type,mimeType:x.mime_type,size:x.file_size,durationSeconds:x.duration_seconds,url:`/api/jobs/${job.id}/media/${x.id}`}))});});
+app.get('/api/jobs/:id/media/:mediaId',requireAuth,async(req,res)=>{const job=await jobMediaAccess(req);if(!job)return res.sendStatus(404);const media=sqlite.prepare('SELECT storage_name,mime_type FROM job_media WHERE id=? AND job_id=?').get(req.params.mediaId,job.id);if(!media)return res.sendStatus(404);const file=path.join(privateJobRoot,job.id,path.basename(media.storage_name));if(!fs.existsSync(file))return res.sendStatus(404);res.set('Content-Type',media.mime_type).set('X-Content-Type-Options','nosniff').set('Cache-Control','private, no-store');return res.sendFile(file);});
+
 app.get('/api/jobs', optionalAuth, async (req, res) => {
   
   let query = db.from('jobs').select('*, services(name), service_tasks(name)').order('created_at', { ascending: false });
@@ -1558,6 +1626,13 @@ app.patch('/api/admin/conversations/:id', requireAdmin, async (req, res) => {
   if (!data) return res.status(404).json({ success: false, message: 'Conversation not found.' });
   await dbResult(db.from('admin_action_logs').insert({ actor_id: req.appProfile.id, conversation_id: data.id, action: `conversation_${status}`, notes: String(req.body?.notes || '').slice(0, 500) }));
   res.json({ success: true, data });
+});
+
+app.use((error,req,res,next)=>{
+  if(res.headersSent)return next(error);
+  if(error instanceof multer.MulterError)return res.status(error.code==='LIMIT_FILE_SIZE'?413:400).json({success:false,message:error.code==='LIMIT_FILE_SIZE'?'Each media file must be 5 MB or smaller.':'Choose no more than 5 photos and one voice note.'});
+  console.error('[request error]',error.message);
+  return res.status(500).json({success:false,message:'The request could not be completed. Please try again.'});
 });
 
 const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);

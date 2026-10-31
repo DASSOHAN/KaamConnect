@@ -8,6 +8,7 @@ import {
   ChevronUp
 } from 'lucide-react';
 import { TRANSLATIONS } from '../utils/i18n';
+import { DEFAULT_AVATAR } from '../utils/defaultAvatar';
 
 export const WorkerCard = ({
   worker,
@@ -32,7 +33,7 @@ export const WorkerCard = ({
         <div className="flex items-start gap-3.5 mb-3.5">
           <div className="relative">
             <img
-              src={worker.avatar}
+              src={worker.avatar || DEFAULT_AVATAR}
               alt={worker.name}
               className="w-14 h-14 rounded-2xl object-cover border border-slate-200"
             />

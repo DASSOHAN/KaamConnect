@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { TRANSLATIONS } from '../utils/i18n';
 import { VoiceAssistant } from '../utils/voice';
+import { DEFAULT_AVATAR } from '../utils/defaultAvatar';
 
 export const WorkerDashboard = ({
   language,
@@ -162,7 +163,7 @@ export const WorkerDashboard = ({
           <div className="flex items-center gap-4">
             <div className="relative">
               <img
-                src={worker.avatar}
+                src={worker.avatar || DEFAULT_AVATAR}
                 alt={worker.name}
                 className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-cover border-2 border-slate-700"
               />

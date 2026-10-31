@@ -65,11 +65,21 @@ export const api = {
   updateAdminMessageReport: (token, reportId, updates) => authorizedRequest(`/admin/message-reports/${encodeURIComponent(reportId)}`, token, { method: 'PATCH', body: JSON.stringify(updates) }),
   moderateAccount: (token, userId, isSuspended) => authorizedRequest(`/admin/users/${encodeURIComponent(userId)}/suspension`, token, { method: 'PATCH', body: JSON.stringify({ isSuspended }) }),
   moderateConversation: (token, conversationId, status, notes) => authorizedRequest(`/admin/conversations/${encodeURIComponent(conversationId)}`, token, { method: 'PATCH', body: JSON.stringify({ status, notes }) }),
-  createJob: async (job, token) => {
-    const res = await apiFetch(`${BASE_URL}/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(job) });
-    const json = await res.json();
-    if (!res.ok || !json.success) throw new Error(json.message || 'Unable to post your job');
-    return json.data;
+  createJob: async (job, token, onProgress = () => {}) => {
+    const body = new FormData();
+    Object.entries(job).forEach(([key, value]) => { if (key !== 'photos' && key !== 'voice' && value !== undefined && value !== null) body.append(key, String(value)); });
+    (job.photos || []).forEach((file) => body.append('photos', file));
+    if (job.voice) body.append('voice', job.voice);
+    return new Promise(async (resolve, reject) => {
+      try {
+        const xhr = new XMLHttpRequest(); xhr.open('POST', `${BASE_URL}/jobs/with-media`); xhr.withCredentials = true;
+        xhr.setRequestHeader('X-CSRF-Token', await securityToken());
+        xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(Math.round(event.loaded / event.total * 100)); };
+        xhr.onerror = () => reject(new Error('KaamConnect API is unreachable. Start the Express server and retry.'));
+        xhr.onload = () => { let json = {}; try { json = JSON.parse(xhr.responseText); } catch {} if (xhr.status < 200 || xhr.status >= 300 || !json.success) reject(new Error(json.message || 'Unable to post your job')); else resolve(json.data); };
+        xhr.send(body);
+      } catch (error) { reject(error); }
+    });
   },
 
   getJobs: async (customerId) => {
@@ -98,6 +108,7 @@ export const api = {
     if (!res.ok || !json.success) throw new Error(json.message || 'Unable to load this job');
     return json.data;
   },
+  getJobMedia: (jobId, token) => authorizedRequest(`/jobs/${encodeURIComponent(jobId)}/media`, token),
 
   // Health
   checkHealth: async () => {

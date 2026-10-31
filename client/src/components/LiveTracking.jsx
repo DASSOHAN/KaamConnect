@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { TRANSLATIONS } from '../utils/i18n';
+import { DEFAULT_AVATAR } from '../utils/defaultAvatar';
 
 export const LiveTracking = ({
   booking,
@@ -152,7 +153,7 @@ export const LiveTracking = ({
             <div className="p-4 rounded-2xl border border-slate-200 bg-white shadow-subtle flex items-start justify-between gap-3">
               <div className="flex items-start gap-3">
                 <img
-                  src={worker.avatar}
+                  src={worker.avatar || DEFAULT_AVATAR}
                   alt={worker.name}
                   className="w-14 h-14 rounded-2xl object-cover border border-slate-200"
                 />

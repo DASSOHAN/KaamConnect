@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Check, Edit3, Power, RefreshCw, X } from 'lucide-react';
+import { ArrowLeft, Check, Edit3, ImagePlus, Power, RefreshCw, X } from 'lucide-react';
 import { WorkerDashboard } from './WorkerDashboard';
 import { api } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { DEFAULT_AVATAR } from '../utils/defaultAvatar';
 
 export const WorkerWorkspace = ({ workerId, ownerId, workers, incomingJobData, language, showToast, onBack, onJobAcceptedByWorker, onBrowseJobs, onOpenChat }) => {
   const { session } = useAuth();
@@ -11,6 +12,7 @@ export const WorkerWorkspace = ({ workerId, ownerId, workers, incomingJobData, l
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [isEditing, setIsEditing] = useState(false);
+  const [reminderDismissed, setReminderDismissed] = useState(() => window.sessionStorage.getItem('kaamconnect-photo-reminder-dismissed') === '1');
 
   useEffect(() => {
     const nextWorker = workers.find((item) => item.id === workerId) || workers[0];
@@ -49,8 +51,9 @@ export const WorkerWorkspace = ({ workerId, ownerId, workers, incomingJobData, l
       </div>
 
       <div className="rounded-2xl border border-blue-100 bg-white p-5 shadow-subtle">
+        {!worker?.avatar && !reminderDismissed && <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-blue-50 p-3 text-xs text-blue-900"><span>Add a profile photo when you’re ready. It helps customers recognize you.</span><div className="flex gap-3"><button type="button" onClick={()=>setIsEditing(true)} className="font-bold underline">Add photo</button><button type="button" onClick={()=>{window.sessionStorage.setItem('kaamconnect-photo-reminder-dismissed','1');setReminderDismissed(true);}} className="font-semibold">Dismiss</button></div></div>}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3"><img src={worker?.avatar} alt={worker?.name} className="h-14 w-14 rounded-2xl object-cover" /><div><h1 className="text-xl font-extrabold text-slate-900">{worker?.name || 'Worker workspace'}</h1><p className="text-xs text-slate-500">{worker?.tradeTitle} · {worker?.locality}</p></div></div>
+          <div className="flex items-center gap-3"><img src={worker?.avatar || DEFAULT_AVATAR} alt={worker?.name} className="h-14 w-14 rounded-2xl object-cover" /><div><h1 className="text-xl font-extrabold text-slate-900">{worker?.name || 'Worker workspace'}</h1><p className="text-xs text-slate-500">{worker?.tradeTitle} · {worker?.locality}</p></div></div>
           <button type="button" onClick={() => setIsEditing((value) => !value)} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"><Edit3 className="h-3.5 w-3.5" /> {isEditing ? 'Close editor' : 'Edit profile'}</button>
         </div>
         {isEditing && <ProfileEditor worker={worker} ownerId={ownerId} onSaved={(saved) => { setWorker(saved); setIsEditing(false); showToast('Profile saved', 'Your worker profile was updated.', 'success'); }} />}
@@ -70,8 +73,9 @@ const JobRow = ({ job, onUpdate }) => <div className="rounded-xl border border-s
 
 const ProfileEditor = ({ worker, ownerId, onSaved }) => {
   const { session } = useAuth();
-  const [form, setForm] = useState({ name: worker.name || '', phone: worker.phone || '', locality: worker.locality || '', skills: (worker.skills || []).join(', '), experienceYears: worker.experienceYears || 0, halfDayRate: worker.halfDayRate || 0, dailyRate: worker.dailyRate || 0, workingHours: worker.workingHours || '', bio: worker.bio || '', availability: worker.isAvailable });
+  const [form, setForm] = useState({ name: worker.name || '', phone: worker.phone || '', locality: worker.locality || '', skills: (worker.skills || []).join(', '), experienceYears: worker.experienceYears || 0, halfDayRate: worker.halfDayRate || 0, dailyRate: worker.dailyRate || 0, workingHours: worker.workingHours || '', bio: worker.bio || '', availability: worker.isAvailable, avatar: worker.avatar || '' });
   const [error, setError] = useState('');
   const save = async (event) => { event.preventDefault(); setError(''); try { const saved = await api.updateWorkerProfile(worker.id, { ...form, ownerId, skills: form.skills.split(',').map((item) => item.trim()).filter(Boolean) }, session?.user); onSaved(saved); } catch (saveError) { setError(saveError.message); } };
-  return <form onSubmit={save} className="mt-5 grid gap-3 border-t border-slate-100 pt-5 sm:grid-cols-2">{['name', 'phone', 'locality', 'skills', 'experienceYears', 'halfDayRate', 'dailyRate', 'workingHours'].map((field) => <label key={field} className="text-xs font-semibold capitalize text-slate-700">{field.replace(/([A-Z])/g, ' $1')}<input value={form[field]} onChange={(event) => setForm({ ...form, [field]: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-sm font-normal" /></label>)}<label className="sm:col-span-2 text-xs font-semibold text-slate-700">Description<textarea rows={3} value={form.bio} onChange={(event) => setForm({ ...form, bio: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-sm font-normal" /></label>{error && <p className="text-xs text-rose-700 sm:col-span-2">{error}</p>}<button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white sm:col-span-2">Save profile</button></form>;
+  const uploadPhoto=async(event)=>{const file=event.target.files?.[0];event.target.value='';if(!file)return;if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>5*1024*1024){setError('Choose a JPG, PNG or WebP photo under 5 MB.');return;}try{const url=await api.uploadWorkerPhoto(file);setForm((current)=>({...current,avatar:url}));}catch(e){setError(e.message);}};
+  return <form onSubmit={save} className="mt-5 grid gap-3 border-t border-slate-100 pt-5 sm:grid-cols-2"><div className="flex items-center gap-3 sm:col-span-2"><img src={form.avatar||'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 80%22%3E%3Crect width=%2280%22 height=%2280%22 rx=%2218%22 fill=%22%23e2e8f0%22/%3E%3Ccircle cx=%2240%22 cy=%2229%22 r=%2214%22 fill=%22%2394a3b8%22/%3E%3Cpath d=%22M12 76c2-18 13-27 28-27s26 9 28 27%22 fill=%22%2394a3b8%22/%3E%3C/svg%3E'} alt="Worker profile" className="h-14 w-14 rounded-xl object-cover"/><label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold"><ImagePlus className="h-4 w-4"/>{form.avatar?'Replace photo':'Add photo'}<input type="file" accept="image/jpeg,image/png,image/webp" capture="user" onChange={uploadPhoto} className="sr-only"/></label>{form.avatar&&<button type="button" onClick={()=>setForm((current)=>({...current,avatar:''}))} className="text-xs font-semibold text-rose-700">Remove photo</button>}</div>{['name', 'phone', 'locality', 'skills', 'experienceYears', 'halfDayRate', 'dailyRate', 'workingHours'].map((field) => <label key={field} className="text-xs font-semibold capitalize text-slate-700">{field.replace(/([A-Z])/g, ' $1')}<input value={form[field]} onChange={(event) => setForm({ ...form, [field]: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-sm font-normal" /></label>)}<label className="sm:col-span-2 text-xs font-semibold text-slate-700">Description<textarea rows={3} value={form.bio} onChange={(event) => setForm({ ...form, bio: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-sm font-normal" /></label>{error && <p className="text-xs text-rose-700 sm:col-span-2">{error}</p>}<button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white sm:col-span-2">Save profile</button></form>;
 };

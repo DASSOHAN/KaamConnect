@@ -5,42 +5,11 @@ import { api } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
 export const JobDetails = ({ onBack }) => {
-  const { id } = useParams();
-  const navigate = useNavigate();
-  const { session, profile } = useAuth();
-  const [job, setJob] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [attempt, setAttempt] = useState(0);
-  const [offers, setOffers] = useState([]);
-  const [offerError, setOfferError] = useState('');
-  const [accepting, setAccepting] = useState('');
-  useEffect(() => {
-    let active = true;
-    setLoading(true); setError('');
-    api.getJob(id, session?.user).then((result) => { if (active) setJob(result); })
-      .catch((requestError) => { if (active) setError(requestError.message || 'Unable to load this job.'); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [id, attempt, session?.user]);
-
-  useEffect(() => {
-    if (!session?.user || profile?.role !== 'customer') return;
-    api.getJobOffers(session.user, id).then(setOffers).catch(() => setOffers([]));
-  }, [id, session?.user, profile?.role, attempt]);
-
-  const acceptOffer = async (offer) => {
-    setAccepting(offer.id); setOfferError('');
-    try { const result = await api.acceptJobOffer(session.user, id, offer.id); if (result.booking?.conversationId) navigate(`/messages/${result.booking.conversationId}`); else navigate('/bookings'); }
-    catch (err) { setOfferError(err.message); }
-    finally { setAccepting(''); }
-  };
-
-  return <section className="mx-auto max-w-3xl py-7">
-    <button type="button" onClick={onBack} className="mb-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-700"><ArrowLeft className="h-4 w-4" /> Back to Add Job</button>
-    {loading ? <div role="status" className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-600">Loading job...</div>
-      : error ? <div className="rounded-2xl border border-rose-200 bg-white p-8 text-center"><p className="text-sm text-rose-700">{error}</p><button type="button" onClick={() => setAttempt((value) => value + 1)} className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-slate-700"><RefreshCw className="h-3.5 w-3.5" /> Try again</button></div>
-        : job ? <><article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-subtle"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wide text-blue-700">{job.status}</p><h1 className="mt-1 text-2xl font-extrabold text-slate-900">{job.title}</h1></div><span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold capitalize text-amber-800">{job.urgency}</span></div><p className="mt-3 text-sm text-slate-700">{job.description || 'No additional details provided.'}</p><p className="mt-4 flex items-center gap-1 text-sm text-slate-600"><MapPin className="h-4 w-4 text-rose-500" />{job.locality}</p><p className="mt-3 text-xs text-slate-500">Posted {job.created_at ? new Date(job.created_at).toLocaleString() : ''}</p></article>{profile?.role === 'customer' && offers.length > 0 && <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5"><h2 className="text-lg font-bold">Worker offers</h2>{offerError && <p className="mt-2 text-sm text-rose-700">{offerError}</p>}<div className="mt-3 space-y-3">{offers.map((offer) => <div key={offer.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3"><div><strong>{offer.worker?.name || 'KaamConnect worker'}</strong><p className="text-sm text-slate-600">Offer ₹{offer.offeredPrice} · {offer.message || 'No note'}</p></div><button disabled={!!accepting || job.status !== 'open'} onClick={() => acceptOffer(offer)} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{accepting === offer.id ? 'Accepting…' : 'Accept offer'}</button></div>)}</div></section>}</>
-          : null}
-  </section>;
+  const { id }=useParams(); const navigate=useNavigate(); const {session,profile}=useAuth();
+  const [job,setJob]=useState(null),[media,setMedia]=useState([]),[lightbox,setLightbox]=useState(null),[loading,setLoading]=useState(true),[error,setError]=useState(''),[attempt,setAttempt]=useState(0),[offers,setOffers]=useState([]),[offerError,setOfferError]=useState(''),[accepting,setAccepting]=useState('');
+  useEffect(()=>{let active=true;setLoading(true);setError('');api.getJob(id,session?.user).then((result)=>{if(active)setJob(result);}).catch((e)=>{if(active)setError(e.message||'Unable to load this job.');}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[id,attempt,session?.user]);
+  useEffect(()=>{let active=true;if(!job||!session?.user||!['customer','worker'].includes(profile?.role)){setMedia([]);return()=>{active=false;};}api.getJobMedia(id,session.user).then((items)=>{if(active)setMedia(items||[]);}).catch(()=>{if(active)setMedia([]);});return()=>{active=false;};},[job?.id,id,session?.user,profile?.role]);
+  useEffect(()=>{if(!session?.user||profile?.role!=='customer')return;api.getJobOffers(session.user,id).then(setOffers).catch(()=>setOffers([]));},[id,session?.user,profile?.role,attempt]);
+  const acceptOffer=async(offer)=>{setAccepting(offer.id);setOfferError('');try{const result=await api.acceptJobOffer(session.user,id,offer.id);if(result.booking?.conversationId)navigate(`/messages/${result.booking.conversationId}`);else navigate('/bookings');}catch(e){setOfferError(e.message);}finally{setAccepting('');}};
+  return <section className="mx-auto max-w-3xl py-7"><button type="button" onClick={onBack} className="mb-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-700"><ArrowLeft className="h-4 w-4"/> Back to Add Job</button>{loading?<div role="status" className="rounded-2xl border bg-white p-10 text-center text-sm">Loading job...</div>:error?<div className="rounded-2xl border border-rose-200 bg-white p-8 text-center"><p className="text-sm text-rose-700">{error}</p><button type="button" onClick={()=>setAttempt((v)=>v+1)} className="mt-3 inline-flex items-center gap-1 text-xs font-bold"><RefreshCw className="h-3.5 w-3.5"/> Try again</button></div>:job?<><article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-subtle"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase text-blue-700">{job.status}</p><h1 className="mt-1 text-2xl font-extrabold">{job.title}</h1></div><span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold capitalize text-amber-800">{job.urgency}</span></div><p className="mt-3 whitespace-pre-wrap text-sm text-slate-700">{job.description||'No additional details provided.'}</p><p className="mt-4 flex items-center gap-1 text-sm text-slate-600"><MapPin className="h-4 w-4 text-rose-500"/>{job.locality}</p><p className="mt-3 text-xs text-slate-500">Posted {job.created_at?new Date(job.created_at).toLocaleString():''}</p></article>{media.length>0&&<section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5"><h2 className="text-lg font-bold">Problem photos and voice note</h2><div className="mt-3 flex flex-wrap gap-3">{media.filter((m)=>m.type==='photo').map((item)=><button type="button" key={item.id} onClick={()=>setLightbox(item.url)} aria-label="Open job photo" className="overflow-hidden rounded-xl"><img src={item.url} alt="Customer's job" className="h-24 w-24 object-cover"/></button>)}</div>{media.filter((m)=>m.type==='voice').map((item)=><div key={item.id} className="mt-4"><p className="mb-2 text-xs text-slate-600">Customer voice note · {item.durationSeconds||30} seconds</p><audio controls preload="none" src={item.url} className="w-full"/></div>)}</section>}{lightbox&&<div role="dialog" aria-modal="true" aria-label="Job photo preview" onClick={()=>setLightbox(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"><button autoFocus type="button" onClick={()=>setLightbox(null)} className="absolute right-4 top-4 rounded-full bg-white p-2" aria-label="Close photo">×</button><img src={lightbox} alt="Expanded customer job" onClick={(e)=>e.stopPropagation()} className="max-h-[90vh] max-w-[95vw] rounded-xl object-contain"/></div>}{profile?.role==='customer'&&offers.length>0&&<section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5"><h2 className="text-lg font-bold">Worker offers</h2>{offerError&&<p className="mt-2 text-sm text-rose-700">{offerError}</p>}<div className="mt-3 space-y-3">{offers.map((offer)=><div key={offer.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3"><div><strong>{offer.worker?.name||'KaamConnect worker'}</strong><p className="text-sm text-slate-600">Offer ₹{offer.offeredPrice} · {offer.message||'No note'}</p></div><button disabled={!!accepting||job.status!=='open'} onClick={()=>acceptOffer(offer)} className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{accepting===offer.id?'Accepting…':'Accept offer'}</button></div>)}</div></section>}</>:null}</section>;
 };

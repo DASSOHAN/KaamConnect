@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, MapPin, ShieldCheck, Star } from 'lucide-react';
 import { api } from '../services/api';
+import { DEFAULT_AVATAR } from '../utils/defaultAvatar';
 
 export const WorkerProfileView = ({ worker, isLoading, loadError, onRetry, onBack, onBook }) => {
   const [reviews, setReviews] = useState([]);
@@ -18,7 +19,7 @@ export const WorkerProfileView = ({ worker, isLoading, loadError, onRetry, onBac
     <button type="button" onClick={onBack} className="mb-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-700"><ArrowLeft className="h-4 w-4" /> Workers</button>
     <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-subtle sm:p-7">
       <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
-        <img src={worker.avatar} alt={worker.name || 'Worker'} className="h-24 w-24 rounded-2xl border border-slate-200 object-cover" />
+        <img src={worker.avatar || DEFAULT_AVATAR} alt={worker.name || 'Worker'} className="h-24 w-24 rounded-2xl border border-slate-200 object-cover" />
         <div className="flex-1"><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-extrabold text-slate-900">{worker.name || 'KaamConnect worker'}</h1>{worker.kycVerified && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700"><ShieldCheck className="h-3.5 w-3.5" /> Verified</span>}</div>
           <p className="mt-1 text-sm text-slate-600">{worker.tradeTitle || worker.tradeId}</p>
           <p className="mt-2 flex items-center gap-1 text-sm text-slate-600"><MapPin className="h-4 w-4 text-rose-500" />{worker.locality || 'Kalyani'}</p>
