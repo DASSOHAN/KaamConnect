@@ -5,20 +5,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import multer from 'multer';
-import { 
-  INITIAL_LOCATIONS, 
-  INITIAL_SERVICES, 
-  INITIAL_WORKERS, 
-  INITIAL_ANALYTICS 
+import {
+  INITIAL_LOCATIONS,
+  INITIAL_SERVICES,
+  INITIAL_WORKERS,
+  INITIAL_ANALYTICS
 } from './data.js';
 import session from 'express-session';
 import bcrypt from 'bcryptjs';
 import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { dbResult, db, databaseReady, sqlite } from './database/sqlite.js';
 import { SQLiteSessionStore } from './database/session-store.js';
+<<<<<<< HEAD
 import { getAudioDurationSeconds } from './media/audio-duration.js';
 import { assessWithProviders, hasUrgentHazard, urgentSafetyAssessment } from './ai-care.js';
 
+=======
+import { buildElectronicsCareCatalog, validateElectronicsCareRequest } from './electronicsCare.js';
+>>>>>>> origin/main
 
 const app = express();
 dotenv.config({ path: path.join(path.dirname(fileURLToPath(import.meta.url)), '.env') });
@@ -226,6 +230,12 @@ app.get('/api/services', async (req, res) => {
   res.json({ success: true, data: services });
 });
 
+app.get('/api/electronics-care/catalog', async (_req, res) => {
+  const { data, error } = await dbResult(db.from('services').select('*, service_tasks(*)').eq('active', true));
+  if (error) return res.status(503).json({ success: false, message: 'Unable to load configured appliance service prices.' });
+  return res.json({ success: true, data: buildElectronicsCareCatalog(data) });
+});
+
 const workerFromDb = (row) => ({
   ...(row.metadata || {}), id: row.id, legacyId: row.legacy_id, ownerId: row.metadata?.ownerId,
   name: row.users?.full_name || row.metadata?.name || 'KaamConnect worker',
@@ -258,7 +268,7 @@ const bookingFromDb = (row) => {
   const { customerPhone: _privatePhone, ...safeMetadata } = row.metadata || {};
   return ({
   ...safeMetadata, id: row.id, customerId: row.metadata?.customerId || row.customer_id,
-  serviceId: row.service_id, serviceName: row.services?.name || row.metadata?.serviceName || row.service_id,
+  serviceId: row.service_id, serviceName: row.metadata?.serviceName || row.services?.name || row.service_id,
   taskId: row.task_id, taskName: row.service_tasks?.name || row.metadata?.taskName || '',
   workerId: row.worker_id, worker: row.workers ? workerFromDb(row.workers) : null,
   bookingType: row.booking_type, scheduledDate: row.scheduled_date, scheduledSlot: row.scheduled_slot,
@@ -729,17 +739,17 @@ app.patch('/api/workers/:id/kyc', optionalAuth, async (req, res) => {
 
   const current = workers[workerIndex];
   const newStatus = req.body.kycVerified !== undefined ? req.body.kycVerified : !current.kycVerified;
-  
+
   workers[workerIndex] = {
     ...current,
     kycVerified: newStatus,
     aadhaarVerified: newStatus
   };
 
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     message: `Worker KYC status updated to ${newStatus ? 'VERIFIED' : 'SUSPENDED'}`,
-    data: workers[workerIndex] 
+    data: workers[workerIndex]
   });
 });
 
@@ -772,10 +782,10 @@ app.patch('/api/workers/:id/duty', optionalAuth, async (req, res) => {
   };
   savePersistentState();
 
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     message: `Duty mode changed to ${newDuty ? 'ON' : 'OFF'}`,
-    data: workers[workerIndex] 
+    data: workers[workerIndex]
   });
 });
 
@@ -807,6 +817,65 @@ app.patch('/api/workers/:id/rates', optionalAuth, async (req, res) => {
   savePersistentState();
 
   res.json({ success: true, data: workers[workerIndex] });
+});
+
+// Home Electronics Care is stored as one parent booking; its priced appliance lines live in metadata.
+app.post('/api/electronics-care/bookings', optionalAuth, async (req, res) => {
+  if (!req.authUser || !req.appProfile) return res.status(401).json({ success: false, message: 'Sign in with a KaamConnect customer account to request a visit.' });
+  if (req.appProfile.role !== 'customer') return res.status(403).json({ success: false, message: 'Only customer accounts can request Home Electronics Care.' });
+  const { data: serviceRows, error: catalogError } = await dbResult(db.from('services').select('*, service_tasks(*)').eq('active', true));
+  if (catalogError) return res.status(503).json({ success: false, message: 'Unable to validate configured appliance service prices.' });
+  const catalog = buildElectronicsCareCatalog(serviceRows);
+  const checked = validateElectronicsCareRequest(req.body, catalog);
+  if (checked.error) return res.status(400).json({ success: false, message: checked.error });
+  const request = checked.value;
+  const summary = request.lineItems.map((line) => `${line.quantity} × ${line.applianceName}`).join(', ');
+  const electronicsCare = {
+    lineItems: request.lineItems,
+    subtotal: request.subtotal,
+    knownSubtotal: request.knownSubtotal,
+    estimatedTotal: request.estimatedTotal,
+    hasQuotation: request.hasQuotation,
+    currency: 'INR',
+    pricesAreProvisional: true,
+    appointmentStatus: 'requested',
+    assignmentStatus: 'awaiting_team_assignment',
+    teamCategories: request.teamCategories,
+    pricingNotice: request.pricingNotice,
+    quotationMessage: request.quotationMessage,
+  };
+
+  const now = new Date().toISOString();
+  const row = {
+    id: randomUUID(),
+    customer_id: req.appProfile.id,
+    worker_id: null,
+    service_id: 'electrician',
+    task_id: null,
+    booking_type: 'scheduled',
+    scheduled_date: request.requestedDate,
+    scheduled_slot: `${request.requestedTime} (requested, not confirmed)`,
+    locality: request.locality,
+    address_details: request.addressDetails,
+    estimated_price_min: request.estimatedTotal,
+    estimated_price_max: request.estimatedTotal,
+    final_price: null,
+    payment_method: 'quote-after-assessment',
+    status: 'pending',
+    metadata: {
+      customerId: req.appProfile.id,
+      customerName: req.appProfile.full_name,
+      serviceName: 'Home Electronics Care',
+      taskName: summary,
+      electronicsCare,
+    },
+    created_at: now,
+    updated_at: now,
+  };
+  const { data, error } = await dbResult(db.from('bookings').insert(row)
+    .select('*, services(name), service_tasks(name), workers(*, users(*), worker_skills(*))').single());
+  if (error) return res.status(503).json({ success: false, message: 'Unable to save this Home Electronics Care request.' });
+  return res.status(201).json({ success: true, data: bookingFromDb(data) });
 });
 
 // 9. Bookings list
@@ -867,14 +936,14 @@ app.post('/api/bookings', optionalAuth, async (req, res) => {
     const conversation = await createConversationForBooking(data);
     return res.status(201).json({ success: true, message: 'Booking placed & worker dispatched', data: { ...bookingFromDb(data), conversationId: conversation?.id || null } });
   }
-  const { 
-    customerName, 
-    serviceId, 
-    taskId, 
-    locality, 
-    addressDetails, 
-    bookingType, 
-    scheduledDate, 
+  const {
+    customerName,
+    serviceId,
+    taskId,
+    locality,
+    addressDetails,
+    bookingType,
+    scheduledDate,
     scheduledSlot,
     paymentMethod,
     workerId,
@@ -1088,16 +1157,16 @@ app.post('/api/jobs/incoming/accept', (req, res) => {
   const job = incomingJob;
   // Clear incoming or generate next
   incomingJob = null;
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     message: 'Job accepted by worker',
-    data: job 
+    data: job
   });
 });
 
 // Customer-posted jobs and worker offers (SQLite-backed when configured).
 app.post('/api/jobs', requireAuth, async (req, res) => {
-  
+
   if (req.appProfile.role !== 'customer') return res.status(403).json({ success: false, message: 'Only customer accounts can post jobs.' });
   const body = req.body || {};
   const title = String(body.title || '').trim();
@@ -1170,7 +1239,7 @@ app.get('/api/jobs/:id/media',requireAuth,async(req,res)=>{const job=await jobMe
 app.get('/api/jobs/:id/media/:mediaId',requireAuth,async(req,res)=>{const job=await jobMediaAccess(req);if(!job)return res.sendStatus(404);const media=sqlite.prepare('SELECT storage_name,mime_type FROM job_media WHERE id=? AND job_id=?').get(req.params.mediaId,job.id);if(!media)return res.sendStatus(404);const file=path.join(privateJobRoot,job.id,path.basename(media.storage_name));if(!fs.existsSync(file))return res.sendStatus(404);res.set('Content-Type',media.mime_type).set('X-Content-Type-Options','nosniff').set('Cache-Control','private, no-store');return res.sendFile(file);});
 
 app.get('/api/jobs', optionalAuth, async (req, res) => {
-  
+
   let query = db.from('jobs').select('*, services(name), service_tasks(name)').order('created_at', { ascending: false });
   if (req.appProfile?.role === 'customer') query = query.eq('customer_id', req.appProfile.id);
   else if (req.appProfile?.role === 'worker') {
@@ -1189,7 +1258,7 @@ app.get('/api/jobs', optionalAuth, async (req, res) => {
 
 app.get('/api/jobs/:id/offers', requireAuth, async (req, res, next) => {
   if (req.params.id === 'incoming') return next();
-  
+
   const { data, error } = await dbResult(db.from('job_offers').select('*, workers(*, users(*))').eq('job_id', req.params.id).order('created_at'));
   if (error) return res.status(503).json({ success: false, message: 'Unable to load job offers.' });
   const job = await dbResult(db.from('jobs').select('customer_id').eq('id', req.params.id).maybeSingle());
@@ -1202,7 +1271,7 @@ app.get('/api/jobs/:id/offers', requireAuth, async (req, res, next) => {
 
 app.get('/api/jobs/:id', optionalAuth, async (req, res, next) => {
   if (req.params.id === 'incoming') return next();
-  
+
   const { data, error } = await dbResult(db.from('jobs').select('*, services(name), service_tasks(name)').eq('id', req.params.id).maybeSingle());
   if (error) return res.status(503).json({ success: false, message: 'Unable to load job.' });
   if (!data) return res.status(404).json({ success: false, message: 'Job not found.' });
@@ -1218,7 +1287,7 @@ app.get('/api/jobs/:id', optionalAuth, async (req, res, next) => {
 
 app.patch('/api/jobs/:id', requireAuth, async (req, res, next) => {
   if (req.params.id === 'incoming') return next();
-  
+
   if (req.appProfile.role !== 'customer') return res.status(403).json({ success: false, message: 'Only customer accounts can manage posted jobs.' });
   const existing = await dbResult(db.from('jobs').select('*').eq('id', req.params.id).maybeSingle());
   if (existing.error || !existing.data) return res.status(existing.error ? 503 : 404).json({ success: false, message: existing.error ? 'Unable to load job.' : 'Job not found.' });
@@ -1241,7 +1310,7 @@ app.patch('/api/jobs/:id', requireAuth, async (req, res, next) => {
 });
 
 app.post('/api/jobs/:id/offers', requireAuth, async (req, res) => {
-  
+
   if (req.appProfile.role !== 'worker') return res.status(403).json({ success: false, message: 'Only worker accounts can respond to jobs.' });
   const amount = Number(req.body?.offeredPrice);
   if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ success: false, message: 'Enter a valid offer price.' });
@@ -1265,7 +1334,7 @@ app.post('/api/jobs/:id/offers', requireAuth, async (req, res) => {
 });
 
 app.post('/api/jobs/:id/accept-offer', requireAuth, async (req, res) => {
-  
+
   const offer = await dbResult(db.from('job_offers').select('*, jobs(*)').eq('id', req.body?.offerId).eq('job_id', req.params.id).maybeSingle());
   if (offer.error || !offer.data) return res.status(404).json({ success: false, message: 'Offer not found.' });
   if (offer.data.jobs.status !== 'open') return res.status(409).json({ success: false, message: 'This job has already been assigned.' });
@@ -1289,7 +1358,7 @@ app.post('/api/jobs/:id/accept-offer', requireAuth, async (req, res) => {
 });
 
 app.post('/api/reviews', requireAuth, async (req, res) => {
-  
+
   if (req.appProfile.role !== 'customer') return res.status(403).json({ success: false, message: 'Only customer accounts can leave a review.' });
   const rating = Number(req.body?.rating);
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5.' });
@@ -1303,7 +1372,7 @@ app.post('/api/reviews', requireAuth, async (req, res) => {
 });
 
 app.get('/api/workers/:id/reviews', async (req, res) => {
-  
+
   const worker = await findWorkerDb(req.params.id);
   if (worker.error || !worker.data) return res.status(worker.error ? 503 : 404).json({ success: false, message: 'Worker not found.' });
   const { data, error } = await dbResult(db.from('reviews').select('id,rating,review_text,created_at').eq('worker_id', worker.data.id).order('created_at', { ascending: false }));
@@ -1312,7 +1381,7 @@ app.get('/api/workers/:id/reviews', async (req, res) => {
 });
 
 app.get('/api/workers/:id/history', requireAuth, async (req, res) => {
-  
+
   const worker = await findWorkerDb(req.params.id);
   if (worker.error || !worker.data) return res.status(worker.error ? 503 : 404).json({ success: false, message: 'Worker not found.' });
   if (req.appProfile.role !== 'admin' && (req.appProfile.role !== 'worker' || worker.data.user_id !== req.appProfile.id)) return res.status(403).json({ success: false, message: 'You can only view your own worker history.' });
@@ -1322,7 +1391,7 @@ app.get('/api/workers/:id/history', requireAuth, async (req, res) => {
 });
 
 app.get('/api/workers/:id/stats', requireAuth, async (req, res) => {
-  
+
   const worker = await findWorkerDb(req.params.id);
   if (worker.error || !worker.data) return res.status(worker.error ? 503 : 404).json({ success: false, message: 'Worker not found.' });
   if (req.appProfile.role !== 'admin' && (req.appProfile.role !== 'worker' || worker.data.user_id !== req.appProfile.id)) return res.status(403).json({ success: false, message: 'You can only view your own worker statistics.' });

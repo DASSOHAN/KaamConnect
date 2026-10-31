@@ -360,4 +360,3 @@ UPDATE workers SET rating_average = 5.0, rating_count = rating_count + 1 WHERE i
 
 -- Track migration version 3
 INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (3, datetime('now'));
-

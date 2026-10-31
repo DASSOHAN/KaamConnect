@@ -24,6 +24,7 @@ import { WorkerJobBoard } from './components/WorkerJobBoard';
 import { MessagesPage } from './components/MessagesPage';
 import { PublicJobBoard } from './components/PublicJobBoard';
 import { AdminMessageModeration } from './components/AdminMessageModeration';
+import { HomeElectronicsCare } from './components/HomeElectronicsCare';
 import { TRANSLATIONS } from './utils/i18n';
 import { getCategoryCatalog } from './utils/workerCategories';
 import { 
@@ -160,8 +161,12 @@ export function App() {
     else if (workerOnly && profile?.role !== 'worker') navigate('/', { replace: true });
     else if (profile?.role === 'worker' && !profile.worker_profile_complete && ['/worker-dashboard', '/dashboard', '/worker-jobs'].includes(pathname)) navigate('/register-worker', { replace: true });
     else if (adminOnly && profile?.role !== 'admin') navigate('/', { replace: true });
+    else if (customerOnly && !session) {
+      const query = new URLSearchParams({ mode: 'signup', role: 'customer', reason: 'booking', next: `${pathname}${location.search}` });
+      navigate(`/account?${query.toString()}`, { replace: true });
+    }
     else if (customerOnly && profile?.role === 'worker') navigate('/worker-dashboard', { replace: true });
-  }, [authLoading, pathname, session, profile?.role, profile?.worker_profile_complete, navigate]);
+  }, [authLoading, pathname, location.search, session, profile?.role, profile?.worker_profile_complete, navigate]);
 
   useEffect(() => {
     if (!session?.user || profile?.role !== 'worker' || !profile.worker_profile_complete) return undefined;
@@ -283,7 +288,6 @@ export function App() {
 
   const handleOpenBookingForCategory = (category) => {
     if (!session) { requireAccount('booking', `${pathname}${location.search}`, 'customer'); showToast('Account needed', 'Sign in or create a customer account to book this service.', 'info'); return; }
-    if (!session) { navigate('/account?mode=signup&role=customer&next=%2Fbookings'); showToast('Sign in to book a service', 'A customer account is required to create and manage bookings.', 'info'); return; }
     if (profile?.role !== 'customer') { showToast('Customer account required', 'Sign in with a customer account to book a service.', 'warning'); return; }
     setBookingPreselectedCat(category);
     setBookingPreselectedWorker(null);
@@ -292,7 +296,6 @@ export function App() {
 
   const handleOpenBookingForWorker = (worker) => {
     if (!session) { requireAccount('booking', `${pathname}${location.search}`, 'customer'); showToast('Account needed', 'Sign in or create a customer account to book this worker.', 'info'); return; }
-    if (!session) { navigate('/account?mode=signup&role=customer&next=%2Fbookings'); showToast('Sign in to book a service', 'A customer account is required to create and manage bookings.', 'info'); return; }
     if (profile?.role !== 'customer') { showToast('Customer account required', 'Sign in with a customer account to book a service.', 'warning'); return; }
     const cat = services.find((c) => c.id === worker.tradeId) || services[0];
     setBookingPreselectedCat(cat);
@@ -394,6 +397,7 @@ export function App() {
           onOpenWorkerJobs={() => navigateTo('/worker-jobs')}
           onOpenAdmin={() => navigateTo('/admin')}
           onOpenMessages={() => session ? navigateTo('/messages') : requireAccount('messaging', `${pathname}${location.search}`, 'customer')}
+          onOpenElectronicsCare={() => navigateTo('/electronics-care')}
           unreadMessageCount={unreadMessageCount}
           onOpenAccount={() => navigateTo('/account')}
           onSignOut={async () => { try { await signOut(); navigate('/', { replace: true }); } catch (error) { showToast('Unable to sign out', error.message, 'warning'); } }}
@@ -411,6 +415,8 @@ export function App() {
             <AICare services={services} onBack={() => navigateTo('/')} />
           ) : pathname === '/account' ? (
             <AccountPage />
+          ) : pathname === '/electronics-care' && currentRole === 'customer' ? (
+            <HomeElectronicsCare selectedLocation={selectedLocation} />
           ) : pathname === '/messages' || pathname.match(/^\/messages\/[^/]+\/?$/) ? (
             <MessagesPage />
           ) : pathname === '/worker-jobs' ? (
@@ -476,7 +482,18 @@ export function App() {
                 </div>
               </section>
               {/* Primary worker search */}
-              <section className="mt-4 rounded-2xl border border-blue-100 bg-white p-4 shadow-subtle sm:p-5">
+              <section className="home-discovery mt-5 overflow-visible rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-subtle sm:p-8">
+                <div className="home-discovery__intro mb-6 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+                  <div className="max-w-2xl">
+                    <span className="home-discovery__eyebrow inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-bold uppercase tracking-[0.12em]"><span className="h-2 w-2 rounded-full bg-amber-400" />Local help, fairly priced</span>
+                    <h1 className="mt-4 max-w-xl text-3xl font-extrabold leading-tight tracking-[-0.045em] text-slate-900 sm:text-5xl">Good work starts <span className="home-discovery__accent">right here.</span></h1>
+                    <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600 sm:text-base">Find trusted local workers for the jobs that keep your home and day moving. Clear rates, nearby skills, and no middleman cuts.</p>
+                  </div>
+                  <div className="home-discovery__note flex shrink-0 items-center gap-3 rounded-2xl px-4 py-3 sm:max-w-[230px]">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-400 text-slate-900"><ShieldCheck className="h-5 w-5" /></span>
+                    <span><strong className="block text-sm">Fair wage promise</strong><span className="mt-0.5 block text-xs opacity-75">Workers keep what they earn.</span></span>
+                  </div>
+                </div>
                 <label htmlFor="worker-search" className="mb-2 block text-sm font-bold text-slate-900">
                   Find the right worker for your job
                 </label>
@@ -651,7 +668,7 @@ export function App() {
             />
           )}
 
-          {!['/', '/workers', '/post-job', '/register-worker', '/bookings', '/jobs', '/worker-dashboard', '/dashboard', '/admin', '/account', '/messages', '/worker-jobs', '/admin/messages'].includes(pathname) && !pathname.match(/^\/messages\/[^/]+\/?$/) && !activeCategory && !pathname.match(/^\/workers\/[^/]+\/?$/) && !pathname.match(/^\/jobs\/[^/]+\/?$/) && (
+          {!['/', '/workers', '/post-job', '/register-worker', '/bookings', '/jobs', '/worker-dashboard', '/dashboard', '/admin', '/account', '/electronics-care', '/messages', '/worker-jobs', '/admin/messages'].includes(pathname) && !pathname.match(/^\/messages\/[^/]+\/?$/) && !activeCategory && !pathname.match(/^\/workers\/[^/]+\/?$/) && !pathname.match(/^\/jobs\/[^/]+\/?$/) && (
             <section className="mx-auto max-w-xl py-20 text-center">
               <h1 className="text-2xl font-extrabold text-slate-900">Page not found</h1>
               <p className="mt-2 text-sm text-slate-600">The page you’re looking for doesn’t exist.</p>
@@ -664,9 +681,9 @@ export function App() {
         <footer className="mt-16 bg-white border-t border-slate-200 py-10 px-4 sm:px-6">
           <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 text-xs text-slate-500">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-slate-900 text-white flex items-center justify-center font-bold text-sm">
-                <span className="text-blue-400">K</span>
-                <span className="text-emerald-400">C</span>
+              <div className="flex h-8 w-8 items-center justify-center gap-0.5 rounded-xl font-bold text-sm" style={{ backgroundColor: '#F2F0E9' }}>
+                <span className="inline-block" style={{ backgroundImage: 'linear-gradient(to bottom, #FFD43B 0%, #FFD43B 50%, #242629 50%, #242629 75%, #C5CAD0 75%, #C5CAD0 100%)', color: 'transparent', backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', WebkitTextStroke: '0.35px #242629', transform: 'scale(1.12)' }}>K</span>
+                <span className="inline-block" style={{ backgroundImage: 'linear-gradient(to bottom, #FFD43B 0%, #FFD43B 50%, #242629 50%, #242629 75%, #C5CAD0 75%, #C5CAD0 100%)', color: 'transparent', backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', WebkitTextStroke: '0.35px #242629', transform: 'scale(1.12)' }}>C</span>
               </div>
               <div>
                 <span className="font-bold text-slate-900 text-sm">KaamConnect</span>
