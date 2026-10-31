@@ -1,143 +1,233 @@
-# KaamConnect
+# 🛠️ KaamConnect — Hyperlocal Informal Workforce Platform
 
-KaamConnect is a local-first informal workforce platform connecting customers with verified local workers across Nadia District and the Kalyani subdivision.
+> **Connecting verified blue-collar professionals with households across Kalyani and the Nadia District, West Bengal.**
 
-The project runs completely locally with **zero external dependencies**:
-- **Frontend**: React 19 + Vite + Tailwind CSS
-- **Backend**: Node.js + Express
-- **Database**: Local SQLite via `better-sqlite3` (`server/database/kaamconnect.sqlite`)
-- **Authentication**: HTTP-only cookie-based sessions with persistent SQLite session storage and `bcryptjs` password hashing
+KaamConnect is a full-stack, local-first workforce marketplace designed to empower local electricians, plumbers, carpenters, cleaners, masons, and technicians with transparent pricing, instant bookings, direct messaging, and verifiable reviews.
+
+The entire application runs as a **single unified full-stack service** with **zero external cloud dependencies** (pure local SQLite, Express REST API, and React 19 frontend).
 
 ---
 
-## Quick Start (How to Run)
+## 📑 Table of Contents
+- [✨ Key Features](#-key-features)
+- [🏗️ Architecture & Tech Stack](#️-architecture--tech-stack)
+- [📁 Project Structure](#-project-structure)
+- [🚀 Quick Start (Setup & Run)](#-quick-start-setup--run)
+- [🔑 Demo Credentials](#-demo-credentials)
+- [🔌 API Overview](#-api-overview)
+- [🧪 Testing & Verification](#-testing--verification)
+- [🤝 Collaborative Sync Tools](#-collaborative-sync-tools)
 
-### 1. Install Dependencies
+---
 
-From the project root (`KaamConnect/`):
+## ✨ Key Features
 
+### 1. ⚡ Hyperlocal Service Discovery & Booking
+* **Transparent Fair-Wage Pricing**: Clear daily, half-day, and task-specific rates to eliminate arbitrary pricing disputes.
+* **Flexible Bookings**: Choose between **Immediate Emergency Dispatch** or **Scheduled Time-Slot Booking**.
+* **Live Service Status Tracking**: Track order progress from `pending` ➔ `accepted` ➔ `en_route` ➔ `in_progress` ➔ `completed`.
+
+### 2. ❄️ Home Electronics Care & Appliance Diagnostics
+* Dedicated booking module for household appliances:
+  * Air Conditioners (AC), Refrigerators, Washing Machines
+  * Water Purifiers (RO), Microwave Ovens, Geysers / Heaters
+  * Kitchen Chimneys, Inverters / UPS, and Induction Cooktops
+* Provides upfront provisional estimates or quotation-based diagnosis with verified local technicians.
+
+### 3. 💬 Secure In-App Communication & Quotations
+* **Real-time Messaging**: Customer and worker messaging with image attachments (workplace photos, part receipts).
+* **Smart Safety Filters**: Automated redaction and admin alerts for premature off-platform contact sharing.
+* **Formal Quotations**: Workers submit formal labour, material, and travel itemized quotations directly in chat for customer approval.
+
+### 4. 👷 Worker Workspace & Job Board
+* Custom dashboard for local tradespeople to manage active bookings, update daily availability, toggle duty status, and complete KYC verification.
+* Community Job Board where workers view and bid on localized customer job postings matching their trade.
+
+### 5. 🛡️ Admin Moderation & Community Safety
+* Dedicated admin oversight panel for message review, flagged contact attempts, and user suspension/reinstatement.
+* Database integrity checks and automated security token tracking.
+
+---
+
+## 🏗️ Architecture & Tech Stack
+
+```
+┌────────────────────────────────────────────────────────┐
+│                   Unified Full-Stack App               │
+│                  http://localhost:5000                 │
+├───────────────────────────┬────────────────────────────┤
+│       Frontend (SPA)      │        Backend (API)       │
+│  React 19 + Vite + Tailwind│      Express 4 + Node.js   │
+│   Client-side routing     │     REST API & Static Host │
+└─────────────┬─────────────┴──────────────┬─────────────┘
+              │                            │
+              ▼                            ▼
+      Browser Client                 SQLite Database
+ (Single-Origin, No CORS)       (WAL Mode, Foreign Keys)
+```
+
+* **Frontend**: React 19, Vite, Tailwind CSS, Lucide Icons, React Router.
+* **Backend**: Node.js, Express.js.
+* **Database**: Local SQLite via `better-sqlite3` with Write-Ahead Logging (WAL) and strict relational integrity.
+* **Authentication**: HTTP-only session cookies with SQLite persistent storage (`express-session`) and `bcryptjs` password hashing.
+* **Hosting**: **Unified** — Express serves the React SPA static build and handles all `/api/*` requests on one single port (`5000`).
+
+---
+
+## 📁 Project Structure
+
+```text
+KaamConnect/
+├── client/                     # Active React Frontend
+│   ├── src/
+│   │   ├── components/         # UI components (Header, BookingModal, HomeElectronicsCare, etc.)
+│   │   ├── contexts/           # Authentication state (AuthProvider)
+│   │   ├── hooks/              # Custom React hooks (useAuth)
+│   │   ├── services/           # API client (api.js)
+│   │   └── utils/              # Translations, categorization, helpers
+│   ├── index.html              # Frontend HTML entry point
+│   ├── package.json            # Client dependencies (React, Vite, Tailwind)
+│   └── vite.config.js          # Vite build configuration
+├── server/                     # Active Express Backend
+│   ├── database/
+│   │   ├── migrations/         # SQL schema migrations (001, 002, 003 demo seed)
+│   │   ├── sqlite.js           # Database client & Supabase-compatible ORM wrapper
+│   │   └── session-store.js    # Persistent SQLite session store
+│   ├── uploads/                # User uploaded worker avatars & chat attachments
+│   ├── electronicsCare.js      # Electronics care appliance definitions & pricing logic
+│   ├── index.js                # Express server entry point & REST endpoints
+│   ├── package.json            # Server dependencies
+│   └── test/                   # Automated 20-point test harness (run_test.js)
+├── scripts/                    # Git auto-sync helper scripts
+├── package.json                # Root package scripts (orchestrates full-stack lifecycle)
+├── sync.bat                    # One-click collaborator sync utility
+├── sync-watch.bat              # Background live-sync watcher (polls origin/main)
+└── README.md                   # Project documentation
+```
+
+---
+
+## 🚀 Quick Start (Setup & Run)
+
+### 1. Prerequisites
+* **Node.js** v18, v20, v22, or v24
+* **Git**
+
+### 2. Install Dependencies
+Run the installation command from the project root:
 ```powershell
 npm run install:all
 ```
+*(This installs root, server, and client packages).*
 
-Or install in each directory individually:
-```powershell
-npm install
-npm install --prefix server
-npm install --prefix client
-```
-
-### 2. Configure Environment Variables
-
-The backend requires only two environment variables in `server/.env`:
-
-```dotenv
-PORT=5000
-SESSION_SECRET=CgnWohh8NPl/tV2N/o3zKLHDsFOKuz3OGEHbEORxmE27GzzBVoc0pR4CLWPTmTuj
-```
-
-Copy the example file if setting up a fresh clone:
+### 3. Configure Environment Variables
+Copy the template configuration into `server/.env`:
 ```powershell
 Copy-Item server/.env.example server/.env
 ```
 
-*(Note: Never commit `server/.env` or secrets to Git. The frontend requires no `.env` file because requests are proxied locally by Vite).*
-
-### 3. Initialize & Seed Database (Optional)
-
-The database automatically initializes and migrates when the server starts. You can also seed explicitly at any time:
-
-```powershell
-npm run seed
+Ensure `server/.env` contains:
+```dotenv
+PORT=5000
+SESSION_SECRET=kaamconnect_development_session_secret_key_2026_super_secure_32chars
 ```
 
-### 4. Run the Application
+### 4. Start the Application
 
-To run both backend (Express on port 5000) and frontend (Vite on port 5173) together:
+#### Option A: Production / Unified Mode (Recommended)
+Builds the client and starts the unified full-stack server on port 5000:
+```powershell
+npm start
+```
+👉 Open **`http://localhost:5000`** in your browser.
 
+#### Option B: Live Development Mode (Auto-Rebuilding)
+Runs the backend and watches frontend source files for live rebuilds:
 ```powershell
 npm run dev
 ```
+👉 Open **`http://localhost:5000`** in your browser.
 
-Or run them in separate terminals:
-- **Terminal 1 (Backend)**:
-  ```powershell
-  npm run server
-  ```
-- **Terminal 2 (Frontend)**:
-  ```powershell
-  npm run client
-  ```
-
-Open your browser at: **`http://localhost:5173`**
+#### Option C: Split Dev Mode (Standalone Vite Server)
+If you prefer running separate terminals for backend and Vite HMR:
+```powershell
+npm run dev:split
+```
+* Backend API: `http://localhost:5000`
+* Frontend Vite: `http://localhost:5173`
 
 ---
 
-## Pre-seeded Demo Accounts
+## 🔑 Demo Credentials
 
-For testing, the database includes pre-seeded demo accounts (all with password `KaamConnect@123`):
+All pre-seeded demo accounts use the standard password: **`KaamConnect@123`**
 
-| Role | Email | Password | Phone |
+| Role | Name | Email | Profession / Area |
 | :--- | :--- | :--- | :--- |
-| **Admin** | `admin@kaamconnect.test` | `KaamConnect@123` | `9876543210` |
-| **Customer** | `customer1@kaamconnect.test` | `KaamConnect@123` | `9876500001` |
-| **Customer** | `customer2@kaamconnect.test` | `KaamConnect@123` | `9876500002` |
-| **Worker (Electrician)** | `subrata@kaamconnect.test` | `KaamConnect@123` | `9876600001` |
-| **Worker (Plumber)** | `biplab@kaamconnect.test` | `KaamConnect@123` | `9876600002` |
-| **Worker (Cleaner)** | `anjali@kaamconnect.test` | `KaamConnect@123` | `9876600005` |
+| **Admin** | System Admin | `admin@kaamconnect.test` | Full Moderation Hub |
+| **Customer** | Suman Chatterjee | `customer1@kaamconnect.test` | Kalyani Central Park |
+| **Customer** | Priya Mukherjee | `customer2@kaamconnect.test` | Ghoshpara Station Rd |
+| **Worker** | Subrata Das | `subrata@kaamconnect.test` | Electrician (Nadia) |
+| **Worker** | Biplab Roy | `biplab@kaamconnect.test` | Plumber (Kalyani) |
+| **Worker** | Anjali Mondal | `anjali@kaamconnect.test` | Home Cleaner (Kalyani Univ.) |
 
-You can also register brand new customer and worker accounts directly from the UI.
-
----
-
-## Key Features
-
-1. **Guest Browsing**:
-   - Guests can freely browse the homepage, services catalog, fair wage rates, locations, worker listings, public ratings/reviews, and open job postings without logging in.
-   - Private contact info, passwords, and private messages are never exposed to guests.
-
-2. **Secure Authentication & Sessions**:
-   - Registration with separate customer and worker onboarding flows.
-   - Passwords hashed with `bcryptjs` (salt rounds >= 10).
-   - Sessions stored persistently in SQLite (`sessions` table) using `express-session`.
-   - Secure HTTP-only cookies with `SameSite: 'lax'` protection and CSRF token verification.
-   - Login rate-limiting per IP/account to prevent brute force.
-
-3. **Customer Capabilities**:
-   - Book workers immediately or schedule for a specific date and time slot.
-   - Post custom jobs with descriptions, urgency level, and estimated price ranges.
-   - Review job offers from workers, accept offers, and track active bookings.
-   - Private messaging with assigned workers.
-   - Rate and review completed services.
-
-4. **Worker Cockpit & Dashboard**:
-   - Complete worker profile with trade, skills, hourly/daily rates, experience, and bio.
-   - View open job requests matching their trade in Nadia/Kalyani.
-   - Submit quotations and price offers on jobs.
-   - Manage duty/availability status and active bookings.
-   - Coordinate with customers via private in-app messaging.
-
-5. **Admin Hub**:
-   - View system message reports and moderation queue.
-   - Moderate user accounts (suspend / reinstate).
-   - Inspect conversations flagged for safety.
+*You can also register new customer or worker accounts directly through the UI.*
 
 ---
 
-## Running Tests
+## 🔌 API Overview
 
-To run the automated 20-point test suite verifying all endpoints, guest browsing, authentication, jobs, bookings, messaging, and SQLite persistence:
+All API endpoints are prefixed with `/api` and return standard JSON `{ success: boolean, data?: any, message?: string }`:
+
+| Method | Endpoint | Description | Access |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/health` | Health check & SQLite integrity status | Public |
+| `GET` | `/api/services` | Service categories and task rate cards | Public |
+| `GET` | `/api/locations` | Supported areas across Nadia/Kalyani | Public |
+| `GET` | `/api/workers` | Discoverable worker profiles & ratings | Public |
+| `POST` | `/api/auth/register` | Register customer or worker account | Public |
+| `POST` | `/api/auth/login` | Authenticate and create session | Public |
+| `GET` | `/api/auth/me` | Current authenticated user profile | Authenticated |
+| `GET` | `/api/electronics-care/catalog` | Appliance maintenance catalog & rates | Public |
+| `POST` | `/api/electronics-care/bookings` | Book appliance care diagnosis | Customer |
+| `GET` | `/api/jobs` | Public & customer job listings | Public / Authenticated |
+| `POST` | `/api/jobs` | Post a localized service request | Customer |
+| `POST` | `/api/jobs/:id/offers` | Submit worker quotation/offer | Worker |
+| `GET` | `/api/conversations` | User conversations list | Authenticated |
+| `POST` | `/api/conversations/:id/messages` | Send in-app chat message | Participant |
+| `GET` | `/api/admin/message-reports` | View moderation queue & flagged chats | Admin |
+
+---
+
+## 🧪 Testing & Verification
+
+The project includes an automated **20-point end-to-end integration test suite** that exercises every layer (guest browsing, auth, jobs, bookings, quotations, messaging, and database persistence):
 
 ```powershell
 npm test
 ```
 
+To run static linting across active code:
+```powershell
+npx oxlint client/src server
+```
+
 ---
 
-## Database Architecture
+## 🤝 Collaborative Sync Tools
 
-The SQLite database file is stored at `server/database/kaamconnect.sqlite`.
-Schema migrations are tracked with versioning in `schema_migrations`:
-- `001_initial.sql`: Normalized schema with foreign keys, checks, indexes, and tables (`users`, `services`, `service_tasks`, `locations`, `workers`, `worker_skills`, `jobs`, `bookings`, `job_offers`, `reviews`, `conversations`, `conversation_participants`, `quotations`, `messages`, `message_reports`, `admin_action_logs`, `chat_rate_limits`, `auth_rate_limits`, `sessions`).
-- `002_local_imports.sql`: Migration marker tracker for runtime data imports.
-- `003_seed_demo_data.sql`: Seed data for demo admin, customers, workers, jobs, bookings, and reviews.
+To prevent merge conflicts when collaborating on GitHub, helper sync tools are included:
+
+* **One-Click Sync (`sync.bat`)**: Pulls remote commits cleanly using `git pull --rebase` while auto-stashing any local changes.
+  ```powershell
+  .\sync.bat
+  ```
+* **Continuous Watcher (`sync-watch.bat`)**: Polls `origin/main` in the background every 60 seconds and notifies you of collaborator pushes:
+  ```powershell
+  .\sync-watch.bat
+  ```
+
+---
+
+## 📄 License
+This project is open-source under the MIT License. Developed for the Kalyani and Nadia informal workforce community.
