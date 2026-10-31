@@ -24,12 +24,14 @@ import { MessagesPage } from './components/MessagesPage';
 import { PublicJobBoard } from './components/PublicJobBoard';
 import { AdminMessageModeration } from './components/AdminMessageModeration';
 import { HomeElectronicsCare } from './components/HomeElectronicsCare';
+import { AICareModal } from './components/AICareModal';
 // TRANSLATIONS removed
 import { getCategoryCatalog } from './utils/workerCategories';
 import { 
   MapPin, 
   ShieldCheck, 
   ArrowRight,
+  Sparkles,
 
   Search,
   X
@@ -85,6 +87,7 @@ export function App() {
   const [incomingJob, setIncomingJob] = useState(null);
 
   // Booking Flow States
+  const [isAICareOpen, setIsAICareOpen] = useState(false);
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [bookingPreselectedCat, setBookingPreselectedCat] = useState(null);
   const [bookingPreselectedWorker, setBookingPreselectedWorker] = useState(null);
@@ -403,6 +406,7 @@ export function App() {
           onJoinCustomer={() => navigateTo('/account?mode=signup&role=customer')}
           onJoinWorker={() => navigateTo('/account?mode=signup&role=worker')}
           onBrowseJobs={() => navigateTo('/jobs')}
+          onOpenAICare={() => setIsAICareOpen(true)}
           isAuthenticated={!!session}
           locations={locations}
         />
@@ -480,7 +484,31 @@ export function App() {
                     <span><strong className="block text-sm">Fair wage promise</strong><span className="mt-0.5 block text-xs opacity-75">Workers keep what they earn.</span></span>
                   </div>
                 </div>
-                <label htmlFor="worker-search" className="mb-2 block text-sm font-bold text-slate-900">
+                              {/* KaamConnect AI Care Spotlight */}
+              <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-950 text-white shadow-elevated border border-blue-900/60">
+                <div className="flex items-center gap-3.5">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-600/30 border border-blue-400 text-amber-300 shadow-inner">
+                    <Sparkles className="h-6 w-6 animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">KaamConnect AI Care</h3>
+                      <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300 border border-emerald-500/30 uppercase tracking-wider">Gemma AI</span>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-0.5">Understand your appliance issue, try safe manufacturer-level checks, and connect with verified local technicians.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAICareOpen(true)}
+                  className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-bold text-slate-950 hover:bg-amber-300 transition shadow-sm"
+                >
+                  <span>Launch AI Care</span>
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
+
+              <label htmlFor="worker-search" className="mb-2 block text-sm font-bold text-slate-900">
                   Find the right worker for your job
                 </label>
                 <div className="relative" ref={searchContainerRef}>
@@ -698,7 +726,25 @@ export function App() {
       </div>
 
       {/* Booking Wizard Modal */}
-      <BookingModal
+            {/* KaamConnect AI Care Assistant Modal */}
+      <AICareModal
+        isOpen={isAICareOpen || pathname === '/ai-care'}
+        onClose={() => {
+          setIsAICareOpen(false);
+          if (pathname === '/ai-care') navigateTo('/');
+        }}
+        sessionUser={profile}
+        selectedLocation={selectedLocation}
+        onOpenBookingModal={(cat, worker) => {
+          setBookingPreselectedCat(cat);
+          setBookingPreselectedWorker(worker);
+          setIsBookingModalOpen(true);
+        }}
+        onOpenElectronicsCare={() => navigateTo('/electronics-care')}
+        onRequireAuth={() => navigateTo('/account?mode=signin')}
+      />
+
+<BookingModal
         isOpen={isBookingModalOpen}
         onClose={() => setIsBookingModalOpen(false)}
         preselectedCategory={bookingPreselectedCat}

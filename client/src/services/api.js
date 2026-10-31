@@ -345,4 +345,29 @@ export const api = {
       return { success: false };
     }
   },
+  // KaamConnect AI Care: "Understand. Resolve. Connect."
+  createAICareSession: async ({ applianceCategory, initialMessage }) => {
+    return authorizedRequest('/ai-care/session', null, {
+      method: 'POST',
+      body: JSON.stringify({ applianceCategory, initialMessage })
+    });
+  },
+  sendAICareChat: async ({ sessionId, message, applianceCategory }) => {
+    return authorizedRequest('/ai-care/chat', null, {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, message, applianceCategory })
+    });
+  },
+  getAICareSession: async (sessionId) => {
+    return authorizedRequest(`/ai-care/session/${encodeURIComponent(sessionId)}`);
+  },
+  getAICareMatchedWorkers: async (sessionId) => {
+    return authorizedRequest(`/ai-care/matched-workers/${encodeURIComponent(sessionId)}`);
+  },
+  confirmAICareBooking: async (details) => {
+    return authorizedRequest('/ai-care/confirm-booking', null, {
+      method: 'POST',
+      body: JSON.stringify({ ...details, confirmed: true })
+    });
+  },
 };

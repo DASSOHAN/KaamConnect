@@ -7,7 +7,7 @@
     "start": "node index.js",
     "dev": "node --watch index.js",
     "seed": "node database/seed.js",
-    "test": "node test/run_test.js"
+    "test": "node test/run_test.js && node test/ai_care_test.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

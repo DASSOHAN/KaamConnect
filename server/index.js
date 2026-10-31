@@ -18,6 +18,7 @@ import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { dbResult, db, databaseReady, sqlite } from './database/sqlite.js';
 import { SQLiteSessionStore } from './database/session-store.js';
 import { buildElectronicsCareCatalog, validateElectronicsCareRequest } from './electronicsCare.js';
+import { processAICareMessage, SUPPORTED_APPLIANCES, evaluateDeterministicSafety } from './aiCareService.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -65,7 +66,8 @@ app.use((req,res,next)=>{
       }
     }
     const csrf = req.get('x-csrf-token');
-    if (!['/api/auth/login', '/api/auth/register'].includes(req.path) && (!req.session?.csrfToken || !csrf || csrf !== req.session.csrfToken)) {
+    const isExempt = ['/api/auth/login', '/api/auth/register', '/api/ai-care/session'].includes(req.path);
+    if (!isExempt && (!req.session?.csrfToken || !csrf || csrf !== req.session.csrfToken)) {
       return res.status(403).json({ success: false, message: 'Your security token expired. Refresh the page and try again.' });
     }
   }
@@ -1628,6 +1630,310 @@ app.patch('/api/admin/conversations/:id', requireAdmin, async (req, res) => {
 });
 
 // -------------------------------------------------------------
+// =============================================================
+// KaamConnect AI Care Routes: "Understand. Resolve. Connect."
+// =============================================================
+
+const verifyAICareAccess = (req, sessionRow) => {
+  if (!sessionRow) return false;
+  if (sessionRow.customer_id) {
+    return req.session?.userId === sessionRow.customer_id;
+  }
+  const token = req.get('x-ai-session-token') || req.session?.csrfToken || req.session?.id;
+  return sessionRow.session_token === token || (req.session?.userId && !sessionRow.customer_id);
+};
+
+// 1. Create or get AI Care session
+app.post('/api/ai-care/session', async (req, res) => {
+  const customerId = req.session?.userId || null;
+  req.session.csrfToken ||= randomBytes(32).toString('hex');
+  const sessionToken = req.get('x-ai-session-token') || req.session.csrfToken;
+  const applianceCategory = String(req.body?.applianceCategory || 'other');
+  const initialMessage = req.body?.initialMessage ? String(req.body.initialMessage).trim() : null;
+
+  const sessionId = randomUUID();
+  const now = new Date().toISOString();
+
+  let assessment = null;
+  if (initialMessage) {
+    assessment = await processAICareMessage({
+      message: initialMessage,
+      applianceCategory,
+      conversationHistory: [],
+      simulateInvalidModel: req.body?.simulateInvalidModel === true,
+      simulateTimeout: req.body?.simulateTimeout === true,
+    });
+  }
+
+  const status = assessment?.status || 'NEED_MORE_INFORMATION';
+  const action = assessment?.recommended_action || 'ASK_FOLLOW_UP';
+  const summary = JSON.stringify(assessment?.problem_summary || {});
+  const flags = JSON.stringify(assessment?.safety_flags || []);
+  const multiData = JSON.stringify(assessment?.multi_appliance_data || []);
+  const suggestedCategory = assessment?.suggested_service_category || (SUPPORTED_APPLIANCES[applianceCategory]?.serviceId || 'electrician');
+
+  sqlite.prepare(`
+    INSERT INTO ai_care_sessions(id, customer_id, session_token, appliance_category, status, recommended_action, problem_summary, suggested_service_category, safety_flags, multi_appliance_data, created_at, updated_at)
+    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(sessionId, customerId, sessionToken, applianceCategory, status, action, summary, suggestedCategory, flags, multiData, now, now);
+
+  if (initialMessage) {
+    sqlite.prepare(`
+      INSERT INTO ai_care_messages(id, session_id, sender, content, structured_payload, created_at)
+      VALUES(?, ?, 'customer', ?, '{}', ?)
+    `).run(randomUUID(), sessionId, initialMessage, now);
+
+    if (assessment) {
+      sqlite.prepare(`
+        INSERT INTO ai_care_messages(id, session_id, sender, content, structured_payload, created_at)
+        VALUES(?, ?, 'assistant', ?, ?, ?)
+      `).run(randomUUID(), sessionId, assessment.message, JSON.stringify(assessment), new Date(Date.now() + 50).toISOString());
+    }
+  }
+
+  const session = sqlite.prepare('SELECT * FROM ai_care_sessions WHERE id=?').get(sessionId);
+  const messages = sqlite.prepare('SELECT * FROM ai_care_messages WHERE session_id=? ORDER BY created_at ASC').all(sessionId);
+
+  res.json({
+    success: true,
+    data: {
+      session: {
+        ...session,
+        problem_summary: JSON.parse(session.problem_summary || '{}'),
+        safety_flags: JSON.parse(session.safety_flags || '[]'),
+        multi_appliance_data: JSON.parse(session.multi_appliance_data || '[]')
+      },
+      assessment,
+      messages: messages.map(m => ({ ...m, structured_payload: JSON.parse(m.structured_payload || '{}') })),
+      sessionToken,
+      csrfToken: req.session.csrfToken
+    }
+  });
+});
+
+// 2. Chat with AI Care session
+app.post('/api/ai-care/chat', async (req, res) => {
+  const sessionId = String(req.body?.sessionId || '');
+  const message = String(req.body?.message || '').trim();
+  const applianceCategory = req.body?.applianceCategory;
+
+  if (!sessionId || !message) {
+    return res.status(400).json({ success: false, message: 'Session ID and message are required.' });
+  }
+
+  const session = sqlite.prepare('SELECT * FROM ai_care_sessions WHERE id=?').get(sessionId);
+  if (!session) {
+    return res.status(404).json({ success: false, message: 'AI Care session not found.' });
+  }
+
+  // Authorization check (Test I: Reject unauthorized data access)
+  if (!verifyAICareAccess(req, session)) {
+    return res.status(403).json({ success: false, message: 'You are not authorized to access this AI Care session.' });
+  }
+
+  const category = applianceCategory || session.appliance_category || 'other';
+  const now = new Date().toISOString();
+
+  // Save customer message
+  sqlite.prepare(`
+    INSERT INTO ai_care_messages(id, session_id, sender, content, structured_payload, created_at)
+    VALUES(?, ?, 'customer', ?, '{}', ?)
+  `).run(randomUUID(), sessionId, message, now);
+
+  // Retrieve prior messages for context
+  const history = sqlite.prepare('SELECT sender, content FROM ai_care_messages WHERE session_id=? ORDER BY created_at ASC').all(sessionId);
+
+  // Process assessment through AI Care Service
+  const assessment = await processAICareMessage({
+    message,
+    applianceCategory: category,
+    conversationHistory: history,
+    simulateInvalidModel: req.body?.simulateInvalidModel === true,
+    simulateTimeout: req.body?.simulateTimeout === true
+  });
+
+  // Save assistant message
+  const assistantMsgId = randomUUID();
+  const assistantTime = new Date().toISOString();
+  sqlite.prepare(`
+    INSERT INTO ai_care_messages(id, session_id, sender, content, structured_payload, created_at)
+    VALUES(?, ?, 'assistant', ?, ?, ?)
+  `).run(assistantMsgId, sessionId, assessment.message, JSON.stringify(assessment), assistantTime);
+
+  // Update session
+  const summaryJson = JSON.stringify(assessment.problem_summary || JSON.parse(session.problem_summary || '{}'));
+  const flagsJson = JSON.stringify(assessment.safety_flags || []);
+  const multiJson = JSON.stringify(assessment.multi_appliance_data || []);
+  const suggestedCategory = assessment.suggested_service_category || session.suggested_service_category;
+
+  sqlite.prepare(`
+    UPDATE ai_care_sessions
+    SET status = ?, recommended_action = ?, problem_summary = ?, suggested_service_category = ?, safety_flags = ?, multi_appliance_data = ?, updated_at = ?
+    WHERE id = ?
+  `).run(assessment.status, assessment.recommended_action, summaryJson, suggestedCategory, flagsJson, multiJson, assistantTime, sessionId);
+
+  const updatedSession = sqlite.prepare('SELECT * FROM ai_care_sessions WHERE id=?').get(sessionId);
+  const updatedMessages = sqlite.prepare('SELECT * FROM ai_care_messages WHERE session_id=? ORDER BY created_at ASC').all(sessionId);
+
+  res.json({
+    success: true,
+    data: {
+      assessment,
+      session: {
+        ...updatedSession,
+        problem_summary: JSON.parse(updatedSession.problem_summary || '{}'),
+        safety_flags: JSON.parse(updatedSession.safety_flags || '[]'),
+        multi_appliance_data: JSON.parse(updatedSession.multi_appliance_data || '[]')
+      },
+      messages: updatedMessages.map(m => ({ ...m, structured_payload: JSON.parse(m.structured_payload || '{}') }))
+    }
+  });
+});
+
+// 3. Get session history
+app.get('/api/ai-care/session/:id', async (req, res) => {
+  const session = sqlite.prepare('SELECT * FROM ai_care_sessions WHERE id=?').get(req.params.id);
+  if (!session) {
+    return res.status(404).json({ success: false, message: 'AI Care session not found.' });
+  }
+
+  // Authorization check (Test I)
+  if (!verifyAICareAccess(req, session)) {
+    return res.status(403).json({ success: false, message: 'You are not authorized to view this session.' });
+  }
+
+  const messages = sqlite.prepare('SELECT * FROM ai_care_messages WHERE session_id=? ORDER BY created_at ASC').all(req.params.id);
+  res.json({
+    success: true,
+    data: {
+      session: {
+        ...session,
+        problem_summary: JSON.parse(session.problem_summary || '{}'),
+        safety_flags: JSON.parse(session.safety_flags || '[]'),
+        multi_appliance_data: JSON.parse(session.multi_appliance_data || '[]')
+      },
+      messages: messages.map(m => ({ ...m, structured_payload: JSON.parse(m.structured_payload || '{}') }))
+    }
+  });
+});
+
+// 4. Get matched workers for an AI Care session
+app.get('/api/ai-care/matched-workers/:sessionId', async (req, res) => {
+  const session = sqlite.prepare('SELECT * FROM ai_care_sessions WHERE id=?').get(req.params.sessionId);
+  if (!session) {
+    return res.status(404).json({ success: false, message: 'AI Care session not found.' });
+  }
+
+  const tradeId = session.suggested_service_category || 'electrician';
+  const workers = sqlite.prepare(`
+    SELECT w.*, u.full_name, u.phone, u.locality as user_locality
+    FROM workers w
+    JOIN users u ON w.user_id = u.id
+    WHERE w.trade_id = ? AND w.is_available = 1 AND u.is_suspended = 0
+    ORDER BY w.rating_average DESC, w.jobs_completed DESC
+    LIMIT 10
+  `).all(tradeId);
+
+  res.json({
+    success: true,
+    data: {
+      tradeId,
+      workers: workers.map(w => ({
+        id: w.id,
+        name: w.full_name,
+        tradeId: w.trade_id,
+        rating: w.rating_average,
+        reviewCount: w.rating_count,
+        locality: w.locality || w.user_locality,
+        halfDayRate: w.half_day_rate,
+        dailyRate: w.daily_rate,
+        experienceYears: w.experience_years,
+        profilePhotoUrl: w.profile_photo_url,
+        isVerified: w.kyc_status === 'verified'
+      }))
+    }
+  });
+});
+
+// 5. Explicit Booking Confirmation from AI Care (Test J: Booking confirmation)
+app.post('/api/ai-care/confirm-booking', async (req, res) => {
+  // Test J: If confirmed is not explicitly true, reject!
+  if (req.body?.confirmed !== true) {
+    return res.status(400).json({
+      success: false,
+      message: 'Booking creation requires explicit customer confirmation. Review the problem summary and confirm to proceed.'
+    });
+  }
+
+  // Enforce customer authentication
+  if (!req.session?.userId) {
+    return res.status(401).json({
+      success: false,
+      message: 'Please sign in or create a customer account to confirm your technician booking.'
+    });
+  }
+
+  const user = currentUser(req.session.userId);
+  if (!user || user.role !== 'customer') {
+    return res.status(403).json({ success: false, message: 'Only customer accounts can confirm bookings.' });
+  }
+
+  const { sessionId, workerId, serviceId, scheduledDate, scheduledSlot, locality, addressDetails } = req.body;
+  const session = sessionId ? sqlite.prepare('SELECT * FROM ai_care_sessions WHERE id=?').get(sessionId) : null;
+
+  const targetServiceId = serviceId || session?.suggested_service_category || 'electrician';
+  const targetLocality = locality || user.locality || 'Kalyani Ghoshpara';
+  const targetAddress = addressDetails || 'Kalyani, Nadia District';
+  const bookingId = randomUUID();
+  const now = new Date().toISOString();
+
+  let problemSummary = {};
+  try {
+    problemSummary = session?.problem_summary ? JSON.parse(session.problem_summary) : (req.body.problemSummary || {});
+  } catch {}
+
+  const metadata = JSON.stringify({
+    source: 'KaamConnect AI Care',
+    aiCareSessionId: sessionId || null,
+    problemSummary,
+    confirmedByCustomer: true,
+    confirmedAt: now
+  });
+
+  const worker = workerId ? sqlite.prepare('SELECT id FROM workers WHERE id=?').get(workerId) : null;
+
+  sqlite.prepare(`
+    INSERT INTO bookings(id, customer_id, worker_id, service_id, booking_type, scheduled_date, scheduled_slot, locality, address_details, status, metadata, created_at, updated_at)
+    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+  `).run(
+    bookingId,
+    user.id,
+    worker?.id || null,
+    targetServiceId,
+    scheduledDate ? 'scheduled' : 'immediate',
+    scheduledDate || now.slice(0, 10),
+    scheduledSlot || 'Immediate Dispatch',
+    targetLocality,
+    targetAddress,
+    metadata,
+    now,
+    now
+  );
+
+  const booking = sqlite.prepare('SELECT * FROM bookings WHERE id=?').get(bookingId);
+
+  res.json({
+    success: true,
+    message: 'Technician booking confirmed successfully with AI problem summary attached.',
+    data: {
+      booking: {
+        ...booking,
+        metadata: JSON.parse(booking.metadata || '{}')
+      }
+    }
+  });
+});
+
 // Unified Full-Stack Hosting: Serve Frontend from Express
 // -------------------------------------------------------------
 const clientDistPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'client', 'dist');

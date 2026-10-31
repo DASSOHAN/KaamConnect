@@ -1,0 +1,41 @@
+name: kaamconnect
+region: blr
+services:
+- name: web
+  github:
+    branch: main
+    deploy_on_push: true
+    repo: DASSOHAN/KaamConnect
+  dockerfile_path: Dockerfile
+  http_port: 5000
+  instance_count: 1
+  instance_size_slug: basic-xxs
+  routes:
+  - path: /
+  health_check:
+    http_path: /api/health
+    initial_delay_seconds: 15
+    period_seconds: 30
+    timeout_seconds: 5
+    success_threshold: 1
+    failure_threshold: 3
+  envs:
+  - key: NODE_ENV
+    scope: RUN_TIME
+    value: production
+  - key: PORT
+    scope: RUN_TIME
+    value: "5000"
+  - key: SESSION_SECRET
+    scope: RUN_TIME
+    type: SECRET
+    value: kaamconnect-secure-session-prod-2026
+  - key: GEMMA_API_KEY
+    scope: RUN_TIME
+    type: SECRET
+  - key: GEMMA_MODEL
+    scope: RUN_TIME
+    value: gemma-4-26b-a4b-it
+  - key: GEMMA_API_TIMEOUT_MS
+    scope: RUN_TIME
+    value: "5000"

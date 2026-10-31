@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Activity, BarChart3, Briefcase, Check, ChevronDown, Clock, Languages, MapPin,
-  Menu, MessageSquare, Monitor, ShieldCheck, Smartphone, UserRound, Users, X,
+  Menu, MessageSquare, Monitor, ShieldCheck, Smartphone, Sparkles, UserRound, Users, X,
 } from 'lucide-react';
 import { TRANSLATIONS } from '../utils/i18n';
 
@@ -12,7 +12,7 @@ export const Header = ({
   hasActiveBooking, onOpenActiveBooking, onOpenMyJobs, onOpenWorkerDashboard,
   onOpenWorkerJobs, onOpenAdmin, onOpenMessages, unreadMessageCount = 0,
   onOpenAccount, onSignOut, isAuthenticated = false, locations = [],
-  onJoinCustomer, onJoinWorker, onOpenElectronicsCare, onBrowseJobs,
+  onJoinCustomer, onJoinWorker, onOpenElectronicsCare, onBrowseJobs, onOpenAICare,
 }) => {
   const [isLocationOpen, setIsLocationOpen] = useState(false);
   const [isRadiusOpen, setIsRadiusOpen] = useState(false);
@@ -34,6 +34,7 @@ export const Header = ({
     <div className={mobile ? 'grid grid-cols-2 gap-2' : 'flex flex-wrap items-center gap-2'}>
       {hasActiveBooking && <NavButton onClick={() => { closeMenu(); onOpenActiveBooking?.(); }} icon={<Activity />} highlight>Live job</NavButton>}
       {currentRole === 'customer' && <NavButton onClick={() => { closeMenu(); onOpenMyJobs?.(); }} icon={<Clock />}>My Bookings</NavButton>}
+      <NavButton onClick={() => { closeMenu(); onOpenAICare?.(); }} icon={<Sparkles />} highlight>✨ AI Care</NavButton>
       {currentRole === 'customer' && <NavButton onClick={() => { closeMenu(); onOpenElectronicsCare?.(); }} icon={<Monitor />}>Home Electronics Care</NavButton>}
       {!isAuthenticated && <NavButton onClick={() => { closeMenu(); onBrowseJobs?.(); }} icon={<Briefcase />}>Browse jobs</NavButton>}
       {currentRole === 'worker' && <>
@@ -70,6 +71,9 @@ export const Header = ({
           </button>
 
           <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+            <button type="button" onClick={() => { onOpenAICare?.(); closeMenu(); }} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl bg-gradient-to-r from-blue-700 to-indigo-700 px-3 py-2 text-xs font-bold text-white shadow-sm hover:from-blue-600 hover:to-indigo-600 transition">
+              <Sparkles className="h-4 w-4 text-amber-300 animate-pulse" /><span>AI Care</span>
+            </button>
             <button type="button" onClick={() => { onOpenMessages?.(); closeMenu(); }} className="relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 sm:px-3" aria-label={`Messages${unreadMessageCount ? `, ${unreadMessageCount} unread` : ''}`}>
               <MessageSquare className="h-4 w-4" /><span className="hidden sm:inline">Messages</span>
               {unreadMessageCount > 0 && <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-rose-600 px-1 text-[10px] font-bold leading-4 text-white">{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</span>}

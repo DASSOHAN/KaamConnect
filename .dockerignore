@@ -1,0 +1,16 @@
+node_modules
+client/node_modules
+server/node_modules
+server/database/*.sqlite
+server/database/*.sqlite-wal
+server/database/*.sqlite-shm
+server/uploads/*
+!server/uploads/.gitkeep
+server/runtime-data.json
+.env
+server/.env
+*.log
+.git
+.vscode
+dist
+client/dist
