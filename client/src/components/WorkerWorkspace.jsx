@@ -20,13 +20,13 @@ export const WorkerWorkspace = ({ workerId, ownerId, workers, incomingJobData, l
   const loadJobs = async () => {
     if (!worker?.id) return;
     setIsLoading(true); setError('');
-    try { setJobs(await api.getWorkerJobs(worker.id, ownerId, session?.access_token)); } catch (loadError) { setError(loadError.message); } finally { setIsLoading(false); }
+    try { setJobs(await api.getWorkerJobs(worker.id, ownerId, session?.user)); } catch (loadError) { setError(loadError.message); } finally { setIsLoading(false); }
   };
-  useEffect(() => { loadJobs(); }, [worker?.id, ownerId, session?.access_token]);
+  useEffect(() => { loadJobs(); }, [worker?.id, ownerId, session?.user]);
 
   const updateAvailability = async () => {
     try {
-      const result = await api.toggleWorkerDuty(worker.id, !worker.isAvailable, ownerId, session?.access_token);
+      const result = await api.toggleWorkerDuty(worker.id, !worker.isAvailable, ownerId, session?.user);
       if (result?.data) setWorker(result.data);
       showToast('Availability updated', result?.data?.isAvailable ? 'You are available for new requests.' : 'You are now offline.', 'success');
     } catch (updateError) { showToast('Update failed', updateError.message, 'warning'); }
@@ -34,7 +34,7 @@ export const WorkerWorkspace = ({ workerId, ownerId, workers, incomingJobData, l
 
   const updateJob = async (job, status) => {
     try {
-      const updated = await api.updateWorkerJobStatus(job.id, worker.id, ownerId, status, session?.access_token);
+      const updated = await api.updateWorkerJobStatus(job.id, worker.id, ownerId, status, session?.user);
       setJobs((current) => current.map((item) => item.id === updated.id ? updated : item));
       showToast('Job updated', `Job marked ${status}.`, 'success');
       onJobAcceptedByWorker?.(updated);
@@ -72,6 +72,6 @@ const ProfileEditor = ({ worker, ownerId, onSaved }) => {
   const { session } = useAuth();
   const [form, setForm] = useState({ name: worker.name || '', phone: worker.phone || '', locality: worker.locality || '', skills: (worker.skills || []).join(', '), experienceYears: worker.experienceYears || 0, halfDayRate: worker.halfDayRate || 0, dailyRate: worker.dailyRate || 0, workingHours: worker.workingHours || '', bio: worker.bio || '', availability: worker.isAvailable });
   const [error, setError] = useState('');
-  const save = async (event) => { event.preventDefault(); setError(''); try { const saved = await api.updateWorkerProfile(worker.id, { ...form, ownerId, skills: form.skills.split(',').map((item) => item.trim()).filter(Boolean) }, session?.access_token); onSaved(saved); } catch (saveError) { setError(saveError.message); } };
+  const save = async (event) => { event.preventDefault(); setError(''); try { const saved = await api.updateWorkerProfile(worker.id, { ...form, ownerId, skills: form.skills.split(',').map((item) => item.trim()).filter(Boolean) }, session?.user); onSaved(saved); } catch (saveError) { setError(saveError.message); } };
   return <form onSubmit={save} className="mt-5 grid gap-3 border-t border-slate-100 pt-5 sm:grid-cols-2">{['name', 'phone', 'locality', 'skills', 'experienceYears', 'halfDayRate', 'dailyRate', 'workingHours'].map((field) => <label key={field} className="text-xs font-semibold capitalize text-slate-700">{field.replace(/([A-Z])/g, ' $1')}<input value={form[field]} onChange={(event) => setForm({ ...form, [field]: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-sm font-normal" /></label>)}<label className="sm:col-span-2 text-xs font-semibold text-slate-700">Description<textarea rows={3} value={form.bio} onChange={(event) => setForm({ ...form, bio: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 text-sm font-normal" /></label>{error && <p className="text-xs text-rose-700 sm:col-span-2">{error}</p>}<button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white sm:col-span-2">Save profile</button></form>;
 };

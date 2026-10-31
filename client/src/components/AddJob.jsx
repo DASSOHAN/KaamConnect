@@ -17,7 +17,7 @@ export const AddJob = ({ services = [], locations = [], onBack, onPosted, worker
   const submit = async (event) => {
     event.preventDefault(); setError(''); setSaving(true);
     try {
-      const result = await api.createJob(form, session.access_token);
+      const result = await api.createJob(form, session.user);
       setPosted(result);
       onPosted?.(result);
     } catch (submitError) { setError(submitError.message || 'Unable to post your job. Please try again.'); }

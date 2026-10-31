@@ -132,9 +132,9 @@ export const HomeElectronicsCare = ({ selectedLocation }) => {
 
   const submitBooking = async () => {
     if (submissionLock.current || submitting) return;
-    if (!session?.access_token) {
+    if (!session?.user) {
       window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ lines, requestedDate, requestedTime, locality, addressDetails }));
-      navigate('/account?mode=signin&role=customer&next=%2Felectronics-care');
+      navigate('/account?mode=signup&role=customer&reason=booking&next=%2Felectronics-care');
       return;
     }
     if (profile?.role !== 'customer') { setError('A customer account is required to request a home visit.'); return; }
@@ -156,7 +156,7 @@ export const HomeElectronicsCare = ({ selectedLocation }) => {
           brand,
           problemDescription,
         })),
-      }, session.access_token);
+      });
       window.sessionStorage.removeItem(DRAFT_KEY);
       setBooking(created);
     } catch (requestError) {

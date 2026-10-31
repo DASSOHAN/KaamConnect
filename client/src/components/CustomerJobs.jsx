@@ -38,7 +38,7 @@ export const CustomerJobs = ({ customerId, onBack, onOpenLiveBooking, onOpenChat
     setIsLoading(true);
     setError('');
     try {
-      setJobs(await api.getBookings(customerId, session?.access_token));
+      setJobs(await api.getBookings(customerId, session?.user));
     } catch (loadError) {
       setError(loadError.message || 'Unable to load your bookings.');
     } finally {
@@ -46,9 +46,9 @@ export const CustomerJobs = ({ customerId, onBack, onOpenLiveBooking, onOpenChat
     }
   };
 
-  useEffect(() => { loadJobs(); }, [customerId, onRetry, session?.access_token]);
+  useEffect(() => { loadJobs(); }, [customerId, onRetry, session?.user]);
 
-  if (!session?.access_token) return <section className="mx-auto max-w-2xl py-12"><div className="rounded-2xl border border-slate-200 bg-white p-6"><h1 className="text-xl font-extrabold text-slate-900">Sign in to view your bookings</h1><p className="mt-2 text-sm text-slate-600">Your booking history is private and linked to your KaamConnect account.</p><button type="button" onClick={() => navigate('/account?next=/bookings')} className="mt-4 rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white">Sign in</button></div></section>;
+  if (!session?.user) return <section className="mx-auto max-w-2xl py-12"><div className="rounded-2xl border border-slate-200 bg-white p-6"><h1 className="text-xl font-extrabold text-slate-900">Sign in to view your bookings</h1><p className="mt-2 text-sm text-slate-600">Your booking history is private and linked to your KaamConnect account.</p><div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => navigate('/account?reason=dashboard&next=%2Fbookings')} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-bold text-white">Sign in</button><button type="button" onClick={() => navigate('/account?mode=signup&role=customer&reason=dashboard&next=%2Fbookings')} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700">Create customer account</button></div></div></section>;
 
   const visibleJobs = useMemo(() => (
     activeTab === 'all' ? jobs : jobs.filter((job) => job.status === activeTab)
@@ -57,7 +57,7 @@ export const CustomerJobs = ({ customerId, onBack, onOpenLiveBooking, onOpenChat
   const cancelJob = async (job) => {
     setActionError('');
     try {
-      const updated = await api.cancelBooking(job.id, customerId, session?.access_token);
+      const updated = await api.cancelBooking(job.id, customerId, session?.user);
       setJobs((current) => current.map((item) => item.id === updated.id ? updated : item));
     } catch (cancelError) {
       setActionError(cancelError.message);

@@ -8,12 +8,12 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5000',
+        target: 'http://localhost:5000',
         changeOrigin: true,
         secure: false,
         configure(proxy) {
           proxy.on('error', (error) => {
-            console.error(`[Vite API proxy] Express at http://127.0.0.1:5000 is unreachable: ${error.message}`);
+            console.error(`[Vite API proxy] Express at http://localhost:5000 is unreachable: ${error.message}`);
           });
         },
       },

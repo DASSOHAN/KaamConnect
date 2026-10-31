@@ -31,3 +31,8 @@ dist-ssr
 
 # Local demo persistence created by the Express server
 server/runtime-data.json
+
+# Local SQLite database and uploads
+server/database/*.sqlite
+server/database/*.sqlite-*
+server/uploads/

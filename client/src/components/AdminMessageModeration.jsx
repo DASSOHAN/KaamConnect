@@ -7,12 +7,12 @@ import { useAuth } from '../contexts/AuthContext';
 export function AdminMessageModeration() {
   const { session, profile } = useAuth(); const navigate = useNavigate();
   const [queue, setQueue] = useState({ reports: [], contactAttempts: [] }); const [error, setError] = useState(''); const [inspected, setInspected] = useState(null);
-  const load = useCallback(async () => { if (!session?.access_token) return; try { setQueue(await api.getAdminMessageReports(session.access_token)); setError(''); } catch (err) { setError(err.message); } }, [session?.access_token]);
+  const load = useCallback(async () => { if (!session?.user) return; try { setQueue(await api.getAdminMessageReports(session.user)); setError(''); } catch (err) { setError(err.message); } }, [session?.user]);
   useEffect(() => { load(); }, [load]);
-  const updateReport = async (report, status) => { try { await api.updateAdminMessageReport(session.access_token, report.id, { status }); await load(); } catch (err) { setError(err.message); } };
-  const suspend = async (userId, current) => { try { await api.moderateAccount(session.access_token, userId, !current); await load(); } catch (err) { setError(err.message); } };
-  const inspect = async (conversationId) => { try { setInspected(await api.getAdminConversation(session.access_token, conversationId)); setError(''); } catch (err) { setError(err.message); } };
-  const setConversationStatus = async (status) => { try { await api.moderateConversation(session.access_token, inspected.conversation.id, status, 'Admin moderation review'); await inspect(inspected.conversation.id); } catch (err) { setError(err.message); } };
+  const updateReport = async (report, status) => { try { await api.updateAdminMessageReport(session.user, report.id, { status }); await load(); } catch (err) { setError(err.message); } };
+  const suspend = async (userId, current) => { try { await api.moderateAccount(session.user, userId, !current); await load(); } catch (err) { setError(err.message); } };
+  const inspect = async (conversationId) => { try { setInspected(await api.getAdminConversation(session.user, conversationId)); setError(''); } catch (err) { setError(err.message); } };
+  const setConversationStatus = async (status) => { try { await api.moderateConversation(session.user, inspected.conversation.id, status, 'Admin moderation review'); await inspect(inspected.conversation.id); } catch (err) { setError(err.message); } };
   if (profile?.role !== 'admin') return <section className="mx-auto max-w-3xl py-12"><p className="rounded-xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-800">Admin access required.</p></section>;
   return <section className="mx-auto max-w-6xl space-y-6 py-6"><div className="flex items-center justify-between"><div><button onClick={() => navigate('/admin')} className="mb-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-700"><ArrowLeft className="h-4 w-4" /> Admin dashboard</button><h1 className="text-2xl font-extrabold text-slate-900">Message moderation</h1><p className="text-sm text-slate-500">Reported messages and contact sharing attempts</p></div><button onClick={load} className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm"><RefreshCw className="h-4 w-4" /> Refresh</button></div>
     {error && <p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}

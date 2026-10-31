@@ -1,65 +1,143 @@
 # KaamConnect
 
-KaamConnect uses a React/Vite client and an Express API. When Supabase credentials are configured, Express reads and writes marketplace records in Supabase PostgreSQL. The Supabase secret/service key stays on the server. Without credentials, the original mock-backed worker and booking experience remains available; job posting and other database-only features return a friendly setup error.
+KaamConnect is a local-first informal workforce platform connecting customers with verified local workers across Nadia District and the Kalyani subdivision.
 
-## Supabase setup
+The project runs completely locally with **zero external dependencies**:
+- **Frontend**: React 19 + Vite + Tailwind CSS
+- **Backend**: Node.js + Express
+- **Database**: Local SQLite via `better-sqlite3` (`server/database/kaamconnect.sqlite`)
+- **Authentication**: HTTP-only cookie-based sessions with persistent SQLite session storage and `bcryptjs` password hashing
 
-1. Create a Supabase project.
-2. In the Supabase SQL Editor, run [`server/database/schema.sql`](server/database/schema.sql).
-3. Then run [`server/database/messaging.sql`](server/database/messaging.sql) to add account links, private conversations, messages, quotations, reports, rate limits, RLS and the private chat photo bucket.
-4. Enable Email authentication in Supabase Auth. Copy `server/.env.example` to `server/.env` and enter the project URL and **secret/service** key. Never add these values to the React client or commit `server/.env`.
-5. Copy [`client/.env.example`](client/.env.example) to `client/.env` and set `VITE_SUPABASE_URL` plus the project's **anon/publishable** key. The Supabase secret/service key must only be present in `server/.env`.
-6. From the KaamConnect project directory install server dependencies and seed the current demo marketplace:
+---
 
-   ```powershell
-   npm.cmd install --prefix server
-   npm.cmd run seed --prefix server
-   ```
+## Quick Start (How to Run)
 
-7. Start both apps from the project directory:
+### 1. Install Dependencies
 
-   ```powershell
-   npm.cmd run dev
-   ```
-
-   Or run the backend and frontend in separate terminals with `npm.cmd run server` and `npm.cmd run client`.
-
-The seed command can be run again safely. It preserves the existing service and task IDs used by the UI and maps the existing demo workers into UUID-backed database rows. It adds five fictional demo customers; all demo accounts use placeholder email-like phone identifiers, not real phone numbers.
-
-## Useful commands
+From the project root (`KaamConnect/`):
 
 ```powershell
-npm.cmd install --prefix server
-npm.cmd run seed --prefix server
-npm.cmd run server
-npm.cmd run client
-npm.cmd run build
+npm run install:all
 ```
 
-The Supabase schema includes users, workers, worker skills, services, service tasks, locations, jobs, job offers, bookings, and reviews. Worker ratings are recalculated by a PostgreSQL trigger after a review is inserted. Job photo upload is left as an extension point; `jobs.photo_url` is ready for a Supabase Storage URL.
+Or install in each directory individually:
+```powershell
+npm install
+npm install --prefix server
+npm install --prefix client
+```
 
-## Private messaging setup and use
+### 2. Configure Environment Variables
 
-Messaging requires Supabase Auth accounts; legacy demo identities cannot access private conversations. Create a customer account and a worker account through **Sign in**. A worker must also register a worker profile while signed in. To enable an administrator, promote the intended user's `public.users.role` to `admin` in the Supabase SQL editor; admin promotion is never available through public signup.
-
-Customers post a job from **Post a job**. A worker signs in, opens **Available jobs**, and sends an offer. That creates the job conversation. The customer can review offers on the job details page and accept one, which creates a booking and connects it to the conversation. For regular bookings, the customer and assigned worker can open **Messages** from the booking. Photos use the private `chat-attachments` bucket and short lived signed URLs. Contact sharing checks run in Express and rejected text stays in the editor so it can be edited.
-
-Run the SQL files once against the same Supabase project used by the server and browser. The repository does not include live project credentials, so real Auth, realtime delivery, storage policies, and database persistence still need verification against your project. Messages also refresh periodically as a fallback if a Realtime subscription cannot connect.
-
-## Persistence check
-
-After applying the schema and seed, start the backend and visit `http://localhost:5000/api/health`, `http://localhost:5000/api/services`, and `http://localhost:5000/api/workers`. Then use the UI/API to change worker duty or rates, create a booking or job, stop and restart the backend, and fetch the records again. The API health response indicates whether Supabase is configured. A live persistence check requires valid credentials for a Supabase project.
-
-## Environment variables
-
-The Express server reads these values from `server/.env`:
+The backend requires only two environment variables in `server/.env`:
 
 ```dotenv
-SUPABASE_URL=https://mgqejqdxpdiwdsqvmjpx.supabase.co
-SUPABASE_SECRET_KEY=your_supabase_secret_key
 PORT=5000
+SESSION_SECRET=CgnWohh8NPl/tV2N/o3zKLHDsFOKuz3OGEHbEORxmE27GzzBVoc0pR4CLWPTmTuj
 ```
 
-Keep `SUPABASE_SECRET_KEY` only in `server/.env`. It is ignored by Git and must never be added to client environment variables. The server also accepts the previous `SUPABASE_SERVICE_ROLE_KEY` variable name for existing deployments.
+Copy the example file if setting up a fresh clone:
+```powershell
+Copy-Item server/.env.example server/.env
+```
 
-To verify the live server-to-Supabase connection, start the server and request `http://localhost:5000/api/health/supabase`. The route runs a read-only query against `public.users` and returns HTTP 200 only if that query succeeds; missing credentials, a network/API error, or a missing schema returns an explicit error response.
+*(Note: Never commit `server/.env` or secrets to Git. The frontend requires no `.env` file because requests are proxied locally by Vite).*
+
+### 3. Initialize & Seed Database (Optional)
+
+The database automatically initializes and migrates when the server starts. You can also seed explicitly at any time:
+
+```powershell
+npm run seed
+```
+
+### 4. Run the Application
+
+To run both backend (Express on port 5000) and frontend (Vite on port 5173) together:
+
+```powershell
+npm run dev
+```
+
+Or run them in separate terminals:
+- **Terminal 1 (Backend)**:
+  ```powershell
+  npm run server
+  ```
+- **Terminal 2 (Frontend)**:
+  ```powershell
+  npm run client
+  ```
+
+Open your browser at: **`http://localhost:5173`**
+
+---
+
+## Pre-seeded Demo Accounts
+
+For testing, the database includes pre-seeded demo accounts (all with password `KaamConnect@123`):
+
+| Role | Email | Password | Phone |
+| :--- | :--- | :--- | :--- |
+| **Admin** | `admin@kaamconnect.test` | `KaamConnect@123` | `9876543210` |
+| **Customer** | `customer1@kaamconnect.test` | `KaamConnect@123` | `9876500001` |
+| **Customer** | `customer2@kaamconnect.test` | `KaamConnect@123` | `9876500002` |
+| **Worker (Electrician)** | `subrata@kaamconnect.test` | `KaamConnect@123` | `9876600001` |
+| **Worker (Plumber)** | `biplab@kaamconnect.test` | `KaamConnect@123` | `9876600002` |
+| **Worker (Cleaner)** | `anjali@kaamconnect.test` | `KaamConnect@123` | `9876600005` |
+
+You can also register brand new customer and worker accounts directly from the UI.
+
+---
+
+## Key Features
+
+1. **Guest Browsing**:
+   - Guests can freely browse the homepage, services catalog, fair wage rates, locations, worker listings, public ratings/reviews, and open job postings without logging in.
+   - Private contact info, passwords, and private messages are never exposed to guests.
+
+2. **Secure Authentication & Sessions**:
+   - Registration with separate customer and worker onboarding flows.
+   - Passwords hashed with `bcryptjs` (salt rounds >= 10).
+   - Sessions stored persistently in SQLite (`sessions` table) using `express-session`.
+   - Secure HTTP-only cookies with `SameSite: 'lax'` protection and CSRF token verification.
+   - Login rate-limiting per IP/account to prevent brute force.
+
+3. **Customer Capabilities**:
+   - Book workers immediately or schedule for a specific date and time slot.
+   - Post custom jobs with descriptions, urgency level, and estimated price ranges.
+   - Review job offers from workers, accept offers, and track active bookings.
+   - Private messaging with assigned workers.
+   - Rate and review completed services.
+
+4. **Worker Cockpit & Dashboard**:
+   - Complete worker profile with trade, skills, hourly/daily rates, experience, and bio.
+   - View open job requests matching their trade in Nadia/Kalyani.
+   - Submit quotations and price offers on jobs.
+   - Manage duty/availability status and active bookings.
+   - Coordinate with customers via private in-app messaging.
+
+5. **Admin Hub**:
+   - View system message reports and moderation queue.
+   - Moderate user accounts (suspend / reinstate).
+   - Inspect conversations flagged for safety.
+
+---
+
+## Running Tests
+
+To run the automated 20-point test suite verifying all endpoints, guest browsing, authentication, jobs, bookings, messaging, and SQLite persistence:
+
+```powershell
+npm test
+```
+
+---
+
+## Database Architecture
+
+The SQLite database file is stored at `server/database/kaamconnect.sqlite`.
+Schema migrations are tracked with versioning in `schema_migrations`:
+- `001_initial.sql`: Normalized schema with foreign keys, checks, indexes, and tables (`users`, `services`, `service_tasks`, `locations`, `workers`, `worker_skills`, `jobs`, `bookings`, `job_offers`, `reviews`, `conversations`, `conversation_participants`, `quotations`, `messages`, `message_reports`, `admin_action_logs`, `chat_rate_limits`, `auth_rate_limits`, `sessions`).
+- `002_local_imports.sql`: Migration marker tracker for runtime data imports.
+- `003_seed_demo_data.sql`: Seed data for demo admin, customers, workers, jobs, bookings, and reviews.
