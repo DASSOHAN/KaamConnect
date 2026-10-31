@@ -45,6 +45,7 @@ async function authorizedRequest(path, token, options = {}) {
 export const api = {
   initializeSecurity: securityToken,
   getCurrentUser: () => authorizedRequest('/auth/me'),
+  assessCare: (payload) => authorizedRequest('/ai-care/assess', null, { method: 'POST', body: JSON.stringify(payload) }),
   register: (details) => authorizedRequest('/auth/register', null, { method: 'POST', body: JSON.stringify(details) }),
   login: (details) => authorizedRequest('/auth/login', null, { method: 'POST', body: JSON.stringify(details) }),
   logout: () => authorizedRequest('/auth/logout', null, { method: 'POST' }),

@@ -17,6 +17,7 @@ import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { dbResult, db, databaseReady, sqlite } from './database/sqlite.js';
 import { SQLiteSessionStore } from './database/session-store.js';
 import { getAudioDurationSeconds } from './media/audio-duration.js';
+import { assessWithProviders, hasUrgentHazard, urgentSafetyAssessment } from './ai-care.js';
 
 
 const app = express();
@@ -285,6 +286,23 @@ const requireAuth = (req, res, next) => optionalAuth(req, res, () => {
 const requireAdmin = (req, res, next) => requireAuth(req, res, () => {
   if (req.appProfile.role !== 'admin') return res.status(403).json({ success: false, message: 'Administrator access is required.' });
   next();
+});
+
+app.post('/api/ai-care/assess', requireAuth, async (req, res) => {
+  if (req.appProfile.role !== 'customer') return res.status(403).json({ success: false, message: 'AI Care is available to customer accounts.' });
+  const description = String(req.body?.description || '').trim();
+  const category = String(req.body?.category || '').trim();
+  if (description.length < 4 || description.length > 2000 || !category || category.length > 120) return res.status(400).json({ success: false, message: 'Enter a category and a description between 4 and 2,000 characters.' });
+  const priorUserReports = Array.isArray(req.body?.history) ? req.body.history.slice(-6).map((turn) => typeof turn?.customer === 'string' ? turn.customer : '').join('\n') : '';
+  if (hasUrgentHazard(`${priorUserReports}\n${description}`)) return res.json({ success: true, data: urgentSafetyAssessment() });
+  try {
+    const result = await assessWithProviders({ description, category, history: req.body?.history });
+    return res.json({ success: true, data: result.assessment, provider: result.provider });
+  } catch (error) {
+    console.warn('[AI Care] provider chain exhausted:', error.code || 'AI_PROVIDER_ERROR', error.attempted || []);
+    const message = error.code === 'AI_NOT_CONFIGURED' ? 'AI Care is not configured yet. You can still post a job or contact a professional.' : error.code === 'AI_PROVIDER_REQUEST_REJECTED' ? 'The AI provider rejected this assessment request. Please try again later or choose a professional.' : 'AI Care is temporarily unavailable. Please try again or choose a professional.';
+    return res.status(503).json({ success: false, code: error.code || 'AI_PROVIDER_ERROR', message });
+  }
 });
 
 app.post('/api/workers/photo',requireAuth,(req,res,next)=>req.appProfile.role!=='worker'?res.status(403).json({success:false,message:'Worker account required.'}):next(),imageUpload.single('photo'),(req,res)=>{

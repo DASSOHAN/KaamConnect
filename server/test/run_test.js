@@ -416,6 +416,30 @@ async function run() {
 
   console.log(`  PASS: All records verified directly in SQLite (${userCount} user, job "${jobRow.title}", booking "${bookRow.id}").\n`);
 
+  // AI Care route integration: deterministic hazards work without providers,
+  // missing providers produce an honest error, and a valid primary response is normalized.
+  console.log('AI Care: authenticated endpoint, emergency override, missing keys, and Gemma response');
+  const providerEnvNames = ['GEMINI_API_KEY', 'GROQ_API_KEY', 'OPENROUTER_API_KEY', 'MISTRAL_API_KEY'];
+  const originalProviderEnv = Object.fromEntries(providerEnvNames.map((name) => [name, process.env[name]]));
+  const originalFetch = globalThis.fetch;
+  try {
+    providerEnvNames.forEach((name) => { process.env[name] = ''; });
+    let providerCalls = 0;
+    globalThis.fetch = async () => { providerCalls++; throw new Error('Unexpected provider request'); };
+    const hazardResponse = await makeRequest(app, { method: 'POST', url: '/api/ai-care/assess', headers: { cookie: customerCookie, 'x-csrf-token': customerCsrf }, body: { category: 'Electrician', description: 'I smell gas in the kitchen' } });
+    if (hazardResponse.status !== 200 || hazardResponse.json.data?.status !== 'URGENT_SAFETY' || providerCalls !== 0) throw new Error('AI Care did not deterministically prioritize a gas hazard.');
+    const unconfiguredResponse = await makeRequest(app, { method: 'POST', url: '/api/ai-care/assess', headers: { cookie: customerCookie, 'x-csrf-token': customerCsrf }, body: { category: 'Electrician', description: 'The fan is making a noise' } });
+    if (unconfiguredResponse.status !== 503 || unconfiguredResponse.json.code !== 'AI_NOT_CONFIGURED') throw new Error('AI Care missing-provider response is incorrect.');
+    process.env.GEMINI_API_KEY = 'test-only-key';
+    globalThis.fetch = async (url) => { providerCalls++; if (!String(url).includes('generativelanguage.googleapis.com')) throw new Error('Unexpected fallback provider call.'); return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ status: 'DIY', action: 'PROVIDE_SAFE_GUIDANCE', summary: 'Check the fan switch is on.', questions: [], safetyNotice: 'Do not open wiring.' }) }] } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }); };
+    const primaryResponse = await makeRequest(app, { method: 'POST', url: '/api/ai-care/assess', headers: { cookie: customerCookie, 'x-csrf-token': customerCsrf }, body: { category: 'Electrician', description: 'The fan is making a noise' } });
+    if (primaryResponse.status !== 200 || primaryResponse.json.data?.status !== 'DIY' || primaryResponse.json.data?.imageAnalysis?.includes('not analyzed') !== true) throw new Error(`AI Care primary response failed: ${primaryResponse.text}`);
+    console.log('  PASS: authenticated AI Care route and primary Gemma adapter integration.\n');
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const name of providerEnvNames) { if (originalProviderEnv[name] === undefined) delete process.env[name]; else process.env[name] = originalProviderEnv[name]; }
+  }
+
   // Extra Test: Admin authentication & moderation
   console.log('Extra Test: Admin login and message moderation endpoint access');
   const adminLogin = await makeRequest(app, {

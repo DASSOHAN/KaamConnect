@@ -10,6 +10,7 @@ import { WorkerDashboard } from './components/WorkerDashboard';
 import { WorkerWorkspace } from './components/WorkerWorkspace';
 import { CustomerJobs } from './components/CustomerJobs';
 import { AddJob } from './components/AddJob';
+import { AICare } from './components/AICare';
 import { WorkerProfileView } from './components/WorkerProfileView';
 import { JobDetails } from './components/JobDetails';
 import { WorkerRegistration } from './components/WorkerRegistration';
@@ -406,7 +407,9 @@ export function App() {
         {/* Main Content Area by Perspective Role */}
         <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 w-full">
           {/* CUSTOMER PERSPECTIVE */}
-          {pathname === '/account' ? (
+          {pathname === '/care' ? (
+            <AICare services={services} onBack={() => navigateTo('/')} />
+          ) : pathname === '/account' ? (
             <AccountPage />
           ) : pathname === '/messages' || pathname.match(/^\/messages\/[^/]+\/?$/) ? (
             <MessagesPage />
@@ -461,6 +464,17 @@ export function App() {
             />
           ) : currentRole === 'customer' && (pathname === '/' || pathname === '/workers') ? (
             <div className="space-y-6">
+              <section className="mt-4 overflow-hidden rounded-3xl bg-gradient-to-br from-blue-700 via-blue-800 to-indigo-900 p-6 text-white shadow-card sm:p-9">
+                <div className="grid items-center gap-6 sm:grid-cols-[1fr_auto]">
+                  <div className="max-w-2xl">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-3 py-1 text-xs font-bold"><span aria-hidden="true">✦</span> KAAMCONNECT AI CARE</span>
+                    <h1 className="mt-4 text-2xl font-extrabold tracking-tight sm:text-4xl">Home problem? Let AI Care guide you.</h1>
+                    <p className="mt-3 max-w-xl text-sm leading-6 text-blue-100 sm:text-base">Describe your household problem, get cautious next steps, and find the right professional.</p>
+                    <div className="mt-5 flex flex-wrap gap-3"><button type="button" onClick={() => navigateTo('/care')} className="rounded-xl bg-white px-5 py-3 text-sm font-extrabold text-blue-800 shadow-sm transition hover:bg-blue-50">Try AI Care</button><button type="button" onClick={() => navigateTo('/workers')} className="rounded-xl border border-white/50 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/10">Find a Professional</button></div>
+                  </div>
+                  <div aria-hidden="true" className="hidden h-28 w-28 items-center justify-center rounded-3xl border border-white/20 bg-white/10 text-5xl shadow-inner sm:flex">🛠️</div>
+                </div>
+              </section>
               {/* Primary worker search */}
               <section className="mt-4 rounded-2xl border border-blue-100 bg-white p-4 shadow-subtle sm:p-5">
                 <label htmlFor="worker-search" className="mb-2 block text-sm font-bold text-slate-900">

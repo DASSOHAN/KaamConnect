@@ -1,24 +1,26 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, BriefcaseBusiness, LoaderCircle, Mic, Square, Trash2, X } from 'lucide-react';
 import { api } from '../services/api';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 export const AddJob = ({ services = [], locations = [], onBack, onPosted, workers = [] }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { session, profile } = useAuth();
-  const [form, setForm] = useState({ title: '', serviceId: services[0]?.id || '', taskId: '', description: '', locality: locations[0]?.name || 'Kalyani', urgency: 'normal', preferredDate: '', preferredTime: '' });
+  const [form, setForm] = useState(() => { const params = new URLSearchParams(window.location.search); const draft = location.state?.careDraft || {}; return { title: draft.title || params.get('title') || '', serviceId: draft.serviceId || params.get('serviceId') || services[0]?.id || '', taskId: '', description: draft.description || params.get('description') || '', locality: locations[0]?.name || 'Kalyani', urgency: 'normal', preferredDate: '', preferredTime: '' }; });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [posted, setPosted] = useState(null);
-  const [photos, setPhotos] = useState([]);
+  const [photos, setPhotos] = useState(() => (location.state?.carePhotos || []).map((file) => ({ file, preview: URL.createObjectURL(file) })));
   const [voice, setVoice] = useState(null);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [mediaError, setMediaError] = useState('');
   const recorder = useRef(null); const chunks = useRef([]); const streamRef = useRef(null); const timer = useRef(null); const recordingStartedAt = useRef(0); const elapsedRecordingMs = useRef(0);
-  useEffect(() => () => { clearInterval(timer.current); streamRef.current?.getTracks().forEach((track) => track.stop()); photos.forEach((file) => file.preview && URL.revokeObjectURL(file.preview)); }, []);
+  const photosRef = useRef(photos); photosRef.current = photos;
+  useEffect(() => () => { clearInterval(timer.current); streamRef.current?.getTracks().forEach((track) => track.stop()); photosRef.current.forEach((file) => file.preview && URL.revokeObjectURL(file.preview)); }, []);
   const service = services.find((item) => item.id === form.serviceId);
   const nearby = workers.filter((worker) => worker.tradeId === form.serviceId && worker.isAvailable).slice(0, 5);
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
@@ -81,7 +83,7 @@ export const AddJob = ({ services = [], locations = [], onBack, onPosted, worker
   return <section className="mx-auto max-w-3xl py-7">
     <button type="button" onClick={onBack} className="mb-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-700"><ArrowLeft className="h-4 w-4" /> Back to discovery</button>
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-subtle sm:p-7">
-      <div className="mb-5 flex items-center gap-3"><span className="rounded-xl bg-blue-50 p-3 text-blue-700"><BriefcaseBusiness className="h-5 w-5" /></span><div><h1 className="text-xl font-extrabold text-slate-900">Post a job</h1><p className="text-sm text-slate-500">Tell nearby KaamConnect workers what you need.</p></div></div>
+      <div className="mb-5 flex items-center gap-3"><span className="rounded-xl bg-blue-50 p-3 text-blue-700"><BriefcaseBusiness className="h-5 w-5" /></span><div><h1 className="text-xl font-extrabold text-slate-900">Post a job</h1><p className="text-sm text-slate-500">Tell nearby KaamConnect workers what you need.</p><button type="button" onClick={() => navigate('/care')} className="mt-1 text-xs font-bold text-blue-700">Need help figuring it out? Try AI Care</button></div></div>
       {!session ? <div className="rounded-xl border border-blue-200 bg-blue-50 p-4"><h2 className="font-bold text-slate-900">Sign in to post a job</h2><p className="mt-1 text-sm text-slate-600">A KaamConnect account keeps job responses and messages private.</p><button type="button" onClick={() => navigate('/account?next=/post-job')} className="mt-4 rounded-xl bg-blue-700 px-4 py-2 text-xs font-bold text-white">Sign in or create account</button></div> : !profile ? <p role="status" className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">Setting up your account…</p> : profile.role !== 'customer' ? <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">Switch to a customer account to post a job.</p> : posted ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4"><h2 className="font-bold text-emerald-900">Job posted successfully.</h2><p className="mt-1 text-sm text-emerald-800">{posted.title} · {posted.locality}</p><p className="mt-2 text-xs text-emerald-800">Workers can respond as they become available.</p><div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => navigate(`/jobs/${posted.id}`)} className="rounded-xl bg-emerald-700 px-4 py-2 text-xs font-bold text-white">View job details</button><button type="button" onClick={onBack} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white">Find workers</button></div></div> : <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
         <label className="grid gap-1 text-xs font-semibold text-slate-700 sm:col-span-2">What do you need?<input required minLength={3} maxLength={120} value={form.title} onChange={(e) => update('title', e.target.value)} placeholder="Fan is not working" className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal" /></label>
         <label className="grid gap-1 text-xs font-semibold text-slate-700">Category<select value={form.serviceId} onChange={(e) => { update('serviceId', e.target.value); update('taskId', ''); }} className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal">{services.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
